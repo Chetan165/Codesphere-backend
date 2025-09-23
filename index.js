@@ -316,7 +316,6 @@ app.post('/api/contests/getTime/:id',async (req,res)=>{
   try{
     const time=req.body.startTime
     const startTime=new Date(time)
-    console.log(typeof(time))
     const date=new Date()
     if(date>=startTime){
       res.json({ok:true})
