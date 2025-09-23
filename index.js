@@ -312,16 +312,13 @@ app.post('/api/UpdateSubmission',async (req,res)=>{
   }
 })
 
-app.get('/api/contests/getTime/:id',async (req,res)=>{
+app.post('/api/contests/getTime/:id',async (req,res)=>{
   try{
-    const contestId=req.params.id
-    const contestTime=await Prisma.contest.findUnique({
-      where:{
-        id:contestId
-      }
-    })
+    const time=req.body.startTime
+    const startTime=new Date(time)
+    console.log(typeof(time))
     const date=new Date()
-    if(date>=new Date(contestTime.startTime)){
+    if(date>=startTime){
       res.json({ok:true})
     }
     else
