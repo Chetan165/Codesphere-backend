@@ -24,6 +24,7 @@ model User {
   contestStats  ContestStats[]
   createdAt DateTime @default(now())
   Admin   Boolean  @default(false)
+  activeSessionId String?
 }
 
 model Contest {
