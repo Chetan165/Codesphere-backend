@@ -4,11 +4,10 @@ const session = require("express-session");
 const cors = require("cors");
 const TestcaseRouter = require("./TestcaseRoute.js");
 const SubmissionRouter = require("./SubmissionRoute.js");
-const AuthRoutes = require("./routes/AuthRoutes.js");
-const UserRoutes = require("./routes/UserRoutes.js");
+const updatedSubmission = require("./UpdateSubmission.js");
 const ContestRoutes = require("./routes/ContestRoutes.js");
-const ProblemRoutes = require("./routes/ProblemRoutes.js");
-const SubmissionRoutes = require("./routes/SubmissionRoutes.js");
+const isloggedin = require("./middleware/SessionStatus.js");
+const AdminRoutes = require("./routes/AdminRoutes.js");
 require("./auth");
 require("dotenv").config();
 
@@ -35,20 +34,30 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 
-// Root route
-app.get("/", (req, res) => {
-  res.json({
-    sucess: true,
-  });
-});
+const AuthRoutes = require("./routes/AuthRoutes.js");
 
 app.use("/", AuthRoutes);
-app.use("/api", UserRoutes);
+app.use("/admin", AdminRoutes);
 app.use("/api", ContestRoutes);
-app.use("/api", ProblemRoutes);
-app.use("/api", SubmissionRoutes);
 app.use("/api/upload-testcases", TestcaseRouter);
 app.use("/api/Submission/", SubmissionRouter);
+app.post("/api/UpdateSubmission", async (req, res) => {
+  const { uid, problemId, ContestId, score, verdict, Code, lang_id } = req.body;
+  try {
+    await updatedSubmission(
+      uid,
+      problemId,
+      ContestId,
+      score,
+      verdict,
+      Code,
+      lang_id,
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.json({ ok: false, message: err.message });
+  }
+});
 
 app.listen(3000, () => {
   console.log("Server is running on port 3000");

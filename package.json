@@ -4,7 +4,7 @@
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
-    "start": "nodemon index.js"
+    "start": "node index.js"
   },
   "keywords": [],
   "author": "",
@@ -15,6 +15,7 @@
     "prisma": "^6.8.2"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@prisma/client": "^6.8.2",
     "adm-zip": "^0.5.16",
     "cors": "^2.8.5",
@@ -23,6 +24,7 @@
     "express-session": "^1.18.1",
     "multer": "^2.0.1",
     "passport": "^0.7.0",
-    "passport-google-oauth2": "^0.2.0"
+    "passport-google-oauth2": "^0.2.0",
+    "uuid": "^13.0.0"
   }
 }
