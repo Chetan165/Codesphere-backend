@@ -26,13 +26,13 @@ passport.use(
           console.log("User found:", user);
           profile.uid = user.id;
           profile.admin = user.Admin;
-          done(null, profile);
         }
+        done(null, profile);
       } else {
         return done(null, false);
       }
-    }
-  )
+    },
+  ),
 );
 
 passport.serializeUser(function (user, done) {
