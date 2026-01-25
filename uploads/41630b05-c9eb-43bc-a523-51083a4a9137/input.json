@@ -1,0 +1,9 @@
+{
+  "tags": [
+    "Two pointer",
+    "Sorting"
+  ],
+  "difficulty": "Medium",
+  "expectedComplexity": "O(nlogn)",
+  "solution": ""
+}
