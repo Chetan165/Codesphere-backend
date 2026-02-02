@@ -11,4 +11,4 @@ node_modules
 .dump
 sql
 
-/RCEengine/node_modules
+./CEengine/node_modules
