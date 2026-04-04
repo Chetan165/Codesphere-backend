@@ -22,7 +22,7 @@ export default function runInDocker(jobDir, scriptName, options = {}) {
 
     exec(
       dockerCmd,
-      { timeout: options.timeoutMs || 10000 },
+      { timeout: options.timeoutMs || 15000 },
       (error, stdout, stderr) => {
         resolve({
           stdout,
