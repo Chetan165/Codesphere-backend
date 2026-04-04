@@ -21,9 +21,10 @@
     "Union Find",
     "Matrix",
     "Simulation",
-    "Design",
     "Game Theory",
-    "Geometry",
-    "Topological Sort"
+    "Topological Sort",
+    "Monotonic Stack",
+    "Two Pointer",
+    "Prefix Sum"
   ]
 }

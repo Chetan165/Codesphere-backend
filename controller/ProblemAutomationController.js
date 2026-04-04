@@ -39,7 +39,7 @@ You are an expert coding problem setter. Given the following details:
 
 Generate a ${difficulty}, ${questionStyle || "General"} Style problem (but do not use exact statements) with:
 - A clear and concise problem statement
-- Input format (the input should be suitable for multiple testcases per file, i.e., the first line contains T, the number of testcases, and for each testcase, the length/size and data are provided as described; see Codeforces/AtCoder style)
+- Input format (the input should be suitable for multiple testcases per file, i.e., the first line contains T, the number of testcases, and for each testcase, the length/size and data are provided as described; see Codeforces/AtCoder style, also enusre the Constraints are tight and the product of T and length/size of each testcase is sufficient to test the expected time complexity of the solution provided, e.g., if expected complexity is O(n log n) then T can be 100 and length of each testcase can be up to 10^5, but if expected complexity is O(n^2) then T can be 10 and length of each testcase can be up to 10^3, these are just examples, you should decide appropriate values based on the problem and solution provided),
 - Output format
 - Constraints
 - At least one sample input/output
@@ -241,8 +241,8 @@ You are to generate code for test case generation and output generation as follo
 here is the definition/expectation of different testcase types that can be generated, DO NOT MAKE ALL ONLY WRITE LOGIC FOR THOSE WHICH ARE ASKED AFTER THIS DEFINITION:
 
 For "sample", generate a simple, clear, and illustrative test case suitable for display to users as an example, use the sample testcase as given in ${sampleInput} & ${sampleOutput}.
-For "edge", generate a test case that targets the boundaries or special conditions of the problem (e.g., minimum/maximum values, empty or single-element cases, or other tricky scenarios), but do not make it unnecessarily large—focus on what would best test edge behavior.
-For "large", generate a test case that is as big and complex as allowed by the constraints, designed to test performance and efficiency, but always within the problem's limits. For "generic", generate a typical, average-case test case that is neither trivial nor extreme, representing normal expected input.
+For "edge", generate a test case that targets the boundaries or special conditions of the problem (e.g., minimum/maximum values, empty or single-element cases, or other tricky scenarios or MOST IMPORTANT : Questions Specific Edge Case if you know it), but do not make it unnecessarily large—focus on what would best test edge behavior.
+For "large", generate a test case that is as big and complex as allowed by the constraints, designed to test performance and efficiency, but always within the problem's limits and logic (PUT T and N both AS MAX AS ALLOWED !!!!! ).
 For "generic", generate a test case with random values within the allowed constraints, ensuring it is valid and diverse.
 Each function should be tailored to its specific type, not just randomly generated. The logic and data should be chosen to best represent the intent of each testcase type in the context of the problem and its constraints.
 
@@ -278,6 +278,69 @@ Return your response as a JSON object with these fields:
   "outputGenCode": "...python code..."
 }
 `;
+    // const prompt2=const prompt = `
+    // Given the following competitive programming problem:
+
+    // Problem Statement:
+    // ${problemStatement}
+
+    // Input Format:
+    // ${inputFormat}
+
+    // Output Format:
+    // ${outputFormat}
+
+    // Constraints:
+    // ${constraints}
+
+    // You are to generate code for test case generation and output generation as follows:
+
+    // here is the definition/expectation of different testcase types that can be generated, DO NOT MAKE ALL ONLY WRITE LOGIC FOR THOSE WHICH ARE ASKED AFTER THIS DEFINITION:
+
+    // For "sample":
+    //   generate a simple, clear, and illustrative test case suitable for display to users as an example, use the sample testcase as given in ${sampleInput} & ${sampleOutput}.
+    // For "edge":
+    //   generate a test case that targets the boundaries or special conditions of the problem (e.g., minimum/maximum values, empty or single-element cases, or other tricky scenarios or MOST IMPORTANT : Questions Specific Edge Case if you know it), but do not make it unnecessarily large—focus on what would best test edge behavior.
+    // For "large":
+    //    generate a test case that acts as an adversarial performance test. Do not simply use random values. Instead:Analyze Suboptimal Approaches: Identify likely brute-force strategies for this problem. Target Worst-Case Structures: Design the data structure to maximize the operations of those suboptimal strategies (e.g., if the problem involves searching, use "V-shapes," "Deeply Nested structures," "Long Plateaus," or "Monotonic Sequences").Maximize Constraints: Force $T$ and $N$ (or the equivalent sum of $N$) to the absolute maximum allowed by the constraints.Complexity Barrier: The goal is to ensure that while an optimized solution eg (nlogn or O(n)) passes comfortably, question specific brute force approach will strictly Time Limit Exceed (TLE).
+    // For "generic":
+    //   generate a test case with random values within the allowed constraints, ensuring it is valid and diverse.
+
+    //   Each function should be tailored to its specific type, not just randomly generated. The logic and data should be chosen to best represent the intent of each testcase type in the context of the problem and its constraints.
+
+    // When generating 'large' cases, prioritize patterns that break naive solutions over randomness. For example, in range-query or stack problems, use strictly increasing/decreasing sequences or zig-zags
+
+    // 1. inputGenCode: A single Python script that defines ${numTestcases} functions to generate each of the types as specified by [${testcaseTypes.join(", ")}],
+    // For each testcase type specified in ${testcaseTypes.join(", ")}, write a separate function named generate_inputXX (e.g., generate_input00 for "sample", generate_input01 for "edge", etc.). For each function, carefully consider what makes a high-quality test case of that type for the given problem and constraints:
+
+    // each named generate_inputXX (e.g., generate_input00, generate_input01, ...),. Each function must:
+    // - Generate a valid test case strictly within the problem's constraints (never exceeding them).
+    // - Save the test case to a file named input/inputXX.txt (e.g., input00.txt, input01.txt, ...).
+    // - The input format for every generated file must follow the problem's input format, add parameters as per the requirements of the question inputformat (This should match the input format described in the problem statement.)
+    // - The values of T and the length/size of each testcase should never exceed the maximum input length expected for the given expected time complexity e.g (for O(n) i can have T=100 and if array is there for every t of T then max len of arr=10^5-6 (JUST FOR EXAMPLE, THINK AND DECIDE THESE BASED ON PROBLEM))(${expectedComplexity || "of the solution"}).
+    // - Ensure the testcases include well thought-out edge cases, such as minimum/maximum values, sorted/unsorted data, all equal elements, and any other relevant edge scenarios for the problem.
+    // - ensure that if asked for , the first i.e input00.txt and output00.tx is a sample testcase which is provided : ${sampleInput} and ${sampleOutput}
+
+    // 2. outputGenCode: A Python script that, given the provided solution code and the generated input files, reads each input/inputXX.txt, runs the solution, and writes the output to output/outputXX.txt. The script must:
+    // - Use the provided solution code (below) as a function or module.
+    // - Ensure outputs are correct and correspond to the generated inputs.
+
+    // Provided solution code:
+    // """
+    // ${solution}
+    // """
+
+    // IMPORTANT: Return ONLY a valid JSON object. Do NOT include any explanatory text before or after the JSON.
+    // - Ensure all strings are properly escaped with \\n for newlines
+    // - Do NOT use literal line breaks inside JSON string values
+    // - The response must start with { and end with }
+
+    // Return your response as a JSON object with these fields:
+    // {
+    //   "inputGenCode": "...python code...",
+    //   "outputGenCode": "...python code..."
+    // }
+    // `;
 
     try {
       const genAI = new GoogleGenerativeAI(apiKey);
