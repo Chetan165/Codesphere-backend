@@ -1,0 +1,491 @@
+{
+  "Sorting": {
+    "suboptimal_algorithms": [
+      {
+        "name": "Naive QuickSort (first-element pivot)",
+        "complexity": "O(n²) worst case",
+        "how_common": "most common student implementation"
+      },
+      {
+        "name": "Bubble / Selection / Insertion Sort",
+        "complexity": "O(n²) always",
+        "how_common": "beginner students"
+      }
+    ],
+    "large_adversarial": [
+      {
+        "name": "reverse_sorted",
+        "kills": "first-element-pivot QuickSort",
+        "construction_algorithm": "arr = list(range(N, 0, -1))",
+        "why_works": "First element is always max, creating 0 vs N-1 partition splits every level. Forces O(n²) comparisons.",
+        "optimal_safe": "Merge sort splits at midpoint regardless. Python sorted() uses Timsort which detects descending runs."
+      },
+      {
+        "name": "median_of_three_killer",
+        "kills": "median-of-three pivot QuickSort",
+        "construction_algorithm": "candidate = list(range(N))\nkiller = [0]*N\nfor i in range(N//2):\n    killer[2*i] = candidate[i]\n    killer[2*i+1] = candidate[N-1-i]\nreturn killer",
+        "why_works": "Forces median-of-three pivot to always select near-min/max, causing maximally unbalanced partitions.",
+        "optimal_safe": "Introsort (C++ std::sort) detects depth limit and switches to heapsort. Merge sort unaffected."
+      }
+    ],
+    "edge_cases": [
+      {
+        "name": "already_sorted",
+        "construction_algorithm": "arr = list(range(1, N+1))",
+        "bug_caught": "first-element-pivot QuickSort O(n²) on sorted input"
+      },
+      {
+        "name": "reverse_sorted",
+        "construction_algorithm": "arr = list(range(N, 0, -1))",
+        "bug_caught": "first-element-pivot QuickSort O(n²) on reverse input"
+      },
+      {
+        "name": "all_identical",
+        "construction_algorithm": "arr = [5] * N",
+        "bug_caught": "duplicate handling in partition, three-way partition assumption"
+      },
+      {
+        "name": "two_unique_values",
+        "construction_algorithm": "arr = [1 if i%2==0 else 2 for i in range(N)]",
+        "bug_caught": "unstable sort behavior with equal elements"
+      },
+      {
+        "name": "single_element",
+        "construction_algorithm": "arr = [42]",
+        "bug_caught": "loop bounds arr[i+1] access when n=1"
+      }
+    ],
+    "constraint_budget": {
+      "O(n log n)": {
+        "sum_n_limit": 1000000,
+        "recommended_T": 10,
+        "n_per_case": 100000,
+        "vary_n": [
+          100000, 90000, 80000, 70000, 60000, 50000, 40000, 30000, 20000, 10000
+        ],
+        "reasoning": "10^5 * log(10^5) ≈ 1.7M ops per case, T=10 → 17M ops → ~0.03s for optimal. O(n²) at N=10^5 → 10^10 ops → TLE"
+      },
+      "O(n²)": {
+        "sum_n_limit": 10000,
+        "recommended_T": 5,
+        "n_per_case": 2000,
+        "vary_n": [2000, 1800, 1600, 1400, 1200],
+        "reasoning": "2000² = 4M ops per case, manageable. O(n³) at N=2000 → 8×10^9 → TLE"
+      }
+    }
+  },
+
+  "Graph": {
+    "suboptimal_algorithms": [
+      {
+        "name": "Recursive DFS without stack size increase",
+        "complexity": "crashes at depth > 10^4",
+        "how_common": "students who know DFS but not iterative version"
+      },
+      {
+        "name": "Adjacency matrix O(V²) scan",
+        "complexity": "O(V²) per traversal",
+        "how_common": "students using matrix instead of adjacency list"
+      }
+    ],
+    "large_adversarial": [
+      {
+        "name": "bamboo_chain",
+        "kills": "recursive DFS",
+        "construction_algorithm": "edges = [(i, i+1) for i in range(1, N)]\n# N nodes, N-1 edges forming a line\n# Query: traverse from node 1 to node N",
+        "why_works": "Recursion depth equals N. Python default limit is 1000. Even with sys.setrecursionlimit, stack memory exhausts at N=10^5.",
+        "optimal_safe": "Iterative BFS/DFS uses explicit stack data structure, O(V+E), unaffected by depth."
+      },
+      {
+        "name": "complete_graph",
+        "kills": "O(V²) adjacency matrix scan",
+        "construction_algorithm": "N = 3000\nedges = [(i,j) for i in range(1,N+1) for j in range(i+1,N+1)]\n# ~4.5M edges",
+        "why_works": "O(V²) matrix scan: 3000² = 9M ops minimum. Adjacency list BFS: O(V+E) = same order but smaller constant.",
+        "optimal_safe": "Adjacency list processes each edge once in BFS. Total work O(V+E)."
+      }
+    ],
+    "edge_cases": [
+      {
+        "name": "single_node_no_edges",
+        "construction_algorithm": "N=1, E=0",
+        "bug_caught": "empty adjacency list handling, loop on zero neighbors"
+      },
+      {
+        "name": "disconnected_components",
+        "construction_algorithm": "N=1000, edges=(1,2),(3,4),(5,6)... — N/2 isolated pairs",
+        "bug_caught": "assuming graph is connected, not iterating all components"
+      },
+      {
+        "name": "self_loop",
+        "construction_algorithm": "Add edge (1,1) to graph",
+        "bug_caught": "visited check timing — before or after enqueue"
+      },
+      {
+        "name": "star_graph",
+        "construction_algorithm": "edges = [(1, i) for i in range(2, N+1)]",
+        "bug_caught": "degree handling, node 1 has N-1 neighbors"
+      }
+    ],
+    "constraint_budget": {
+      "O(V+E)": {
+        "max_nodes": 100000,
+        "max_edges": 200000,
+        "reasoning": "Standard BFS/DFS handles 10^5 nodes and 2×10^5 edges comfortably in 2s"
+      }
+    }
+  },
+
+  "Dynamic Programming": {
+    "suboptimal_algorithms": [
+      {
+        "name": "Naive recursion without memoization",
+        "complexity": "O(2^N) or O(N!)",
+        "how_common": "students who write recursion first and forget memo"
+      },
+      {
+        "name": "Wrong state definition leading to O(N³) instead of O(N²)",
+        "complexity": "O(N³)",
+        "how_common": "intermediate students with subtle state bugs"
+      }
+    ],
+    "large_adversarial": [
+      {
+        "name": "maximum_overlapping_subproblems",
+        "kills": "naive recursion without memoization",
+        "construction_algorithm": "# For LCS: two identical strings\ns1 = 'a' * N\ns2 = 'a' * N\n# For knapsack: items with weight[i]=1, value[i]=1, capacity=N//2\n# For coin change: coins=[1,2], target=N",
+        "why_works": "Every subproblem is recomputed exponentially many times without memoization.",
+        "optimal_safe": "Bottom-up DP computes each state exactly once. Total states × transition cost."
+      }
+    ],
+    "edge_cases": [
+      {
+        "name": "empty_input",
+        "construction_algorithm": "N=0 or empty string/array",
+        "bug_caught": "base case dp[0] initialization"
+      },
+      {
+        "name": "single_element",
+        "construction_algorithm": "N=1, single item/character",
+        "bug_caught": "dp[1] access when only dp[0] is valid"
+      },
+      {
+        "name": "all_same_values",
+        "construction_algorithm": "All elements = same value",
+        "bug_caught": "transition when no improvement is possible"
+      },
+      {
+        "name": "no_valid_answer",
+        "construction_algorithm": "Input where the answer is 0 or -1 or impossible",
+        "bug_caught": "returning uninitialized dp value instead of base case"
+      }
+    ],
+    "constraint_budget": {
+      "O(n²)": {
+        "sum_n_limit": 10000,
+        "recommended_T": 5,
+        "n_per_case": 2000,
+        "vary_n": [2000, 1800, 1600, 1400, 1200]
+      },
+      "O(n log n)": {
+        "sum_n_limit": 1000000,
+        "recommended_T": 10,
+        "n_per_case": 100000,
+        "vary_n": [
+          100000, 90000, 80000, 70000, 60000, 50000, 40000, 30000, 20000, 10000
+        ]
+      }
+    }
+  },
+
+  "String": {
+    "suboptimal_algorithms": [
+      {
+        "name": "Naive O(N*M) substring search",
+        "complexity": "O(N*M)",
+        "how_common": "students who don't know KMP or Z-function"
+      }
+    ],
+    "large_adversarial": [
+      {
+        "name": "fibonacci_string",
+        "kills": "naive O(N*M) search",
+        "construction_algorithm": "def fib_str(k):\n    a, b = 'a', 'b'\n    for _ in range(k-2):\n        a, b = b, b+a\n    return b\ntext = fib_str(k+4)\npattern = fib_str(k)",
+        "why_works": "Highly periodic with no clean period. Naive search restarts at every mismatch causing O(NM) total comparisons.",
+        "optimal_safe": "KMP failure function handles periodic patterns in O(N+M)."
+      },
+      {
+        "name": "all_same_char_late_mismatch",
+        "kills": "naive O(N*M) search",
+        "construction_algorithm": "text = 'a' * (N-1) + 'b'\npattern = 'a' * (M-1) + 'b'\n# Place so pattern almost-matches every position",
+        "why_works": "Every alignment: M-1 successes then 1 failure. Total: O(N*M) comparisons.",
+        "optimal_safe": "KMP skips matched prefix on mismatch using failure function."
+      }
+    ],
+    "edge_cases": [
+      {
+        "name": "pattern_equals_text",
+        "construction_algorithm": "s = 'abcdef'; pattern = s",
+        "bug_caught": "match at index 0, boundary handling"
+      },
+      {
+        "name": "pattern_longer_than_text",
+        "construction_algorithm": "len(pattern) > len(text)",
+        "bug_caught": "missing early-exit condition"
+      },
+      {
+        "name": "no_occurrence",
+        "construction_algorithm": "text has no occurrence of pattern",
+        "bug_caught": "returning garbage instead of -1 or empty"
+      },
+      {
+        "name": "overlapping_matches",
+        "construction_algorithm": "text='aaaa', pattern='aa' → matches at 0,1,2",
+        "bug_caught": "advancing by len(pattern) instead of 1 after match"
+      }
+    ],
+    "constraint_budget": {
+      "O(n+m)": {
+        "sum_n_limit": 1000000,
+        "reasoning": "KMP handles 10^6 chars comfortably in 2s"
+      },
+      "O(n*m)": {
+        "sum_n_limit": 10000,
+        "reasoning": "N=M=3162 gives ~10^7 ops, borderline for 2s"
+      }
+    }
+  },
+
+  "Two Pointers": {
+    "suboptimal_algorithms": [
+      {
+        "name": "Nested loop O(N²)",
+        "complexity": "O(N²)",
+        "how_common": "students who don't recognize two-pointer applicability"
+      }
+    ],
+    "large_adversarial": [
+      {
+        "name": "answer_at_extremes",
+        "kills": "O(N²) nested loop",
+        "construction_algorithm": "# For pair sum = target:\n# Place valid pair at index 0 and N-1\narr = [non_valid_values_in_middle]\narr[0] = X\narr[N-1] = target - X\n# Nested loop hits it last, two pointers hit it first",
+        "why_works": "Nested loop iterates all N² pairs before finding the last one. Two pointers converge to extremes in O(N).",
+        "optimal_safe": "Two pointers start at both ends by design."
+      }
+    ],
+    "edge_cases": [
+      {
+        "name": "no_valid_pair",
+        "construction_algorithm": "Array where no pair satisfies condition",
+        "bug_caught": "returning uninitialized value instead of -1"
+      },
+      {
+        "name": "all_elements_equal",
+        "construction_algorithm": "arr = [5] * N",
+        "bug_caught": "pointer movement when left value equals right value"
+      },
+      {
+        "name": "single_element",
+        "construction_algorithm": "N=1",
+        "bug_caught": "left pointer equals right pointer from start"
+      }
+    ],
+    "constraint_budget": {
+      "O(n)": {
+        "sum_n_limit": 1000000,
+        "recommended_T": 20,
+        "n_per_case": 50000
+      }
+    }
+  },
+
+  "Prefix Sum": {
+    "suboptimal_algorithms": [
+      {
+        "name": "Recomputing sum for every query O(Q*N)",
+        "complexity": "O(Q*N)",
+        "how_common": "students who don't precompute prefix array"
+      }
+    ],
+    "large_adversarial": [
+      {
+        "name": "maximum_range_queries",
+        "kills": "O(Q*N) recomputation",
+        "construction_algorithm": "N = 100000\nQ = 100000\n# All queries are full range [1, N]\nqueries = [(1, N)] * Q",
+        "why_works": "Each query recomputes sum of entire array. Q*N = 10^10 ops → TLE.",
+        "optimal_safe": "Prefix array answers each query in O(1). Q queries = O(Q)."
+      }
+    ],
+    "edge_cases": [
+      {
+        "name": "query_single_element",
+        "construction_algorithm": "query [i, i] for various i",
+        "bug_caught": "prefix[i] - prefix[i-1] off by one"
+      },
+      {
+        "name": "query_entire_array",
+        "construction_algorithm": "query [1, N]",
+        "bug_caught": "prefix array boundary — prefix[N] vs prefix[N-1]"
+      }
+    ],
+    "constraint_budget": {
+      "O(n+q)": {
+        "sum_n_limit": 100000,
+        "sum_q_limit": 100000
+      }
+    }
+  },
+
+  "Heap": {
+    "suboptimal_algorithms": [
+      {
+        "name": "Sorting entire array for each extraction",
+        "complexity": "O(N² log N)",
+        "how_common": "students who sort instead of using heap"
+      }
+    ],
+    "large_adversarial": [
+      {
+        "name": "interleaved_insert_extract",
+        "kills": "re-sorting on every extraction",
+        "construction_algorithm": "# Alternate: insert N//2 elements, extract min, insert 1 more, extract min...\n# Forces re-sort on every extract if not using heap\noperations = []\nfor i in range(N//2): operations.append(('insert', random.randint(1,10**9)))\nfor i in range(N//2): operations.append(('insert', random.randint(1,10**9))); operations.append(('extract_min',))",
+        "why_works": "Re-sorting after each insert is O(N log N). Total: O(N² log N). Heap maintains order in O(log N) per op.",
+        "optimal_safe": "Heap insert/extract both O(log N). N operations = O(N log N) total."
+      }
+    ],
+    "edge_cases": [
+      {
+        "name": "already_sorted_ascending",
+        "construction_algorithm": "arr = list(range(1, N+1))",
+        "bug_caught": "heapify efficiency, sift-down already minimal"
+      },
+      {
+        "name": "single_element_heap",
+        "construction_algorithm": "heap with one element, extract it",
+        "bug_caught": "empty heap after extraction"
+      }
+    ],
+    "constraint_budget": {
+      "O(n log n)": {
+        "sum_n_limit": 1000000,
+        "recommended_T": 10,
+        "n_per_case": 100000
+      }
+    }
+  },
+
+  "Backtracking": {
+    "suboptimal_algorithms": [
+      {
+        "name": "Backtracking without pruning",
+        "complexity": "O(N!) or O(2^N)",
+        "how_common": "students who implement recursion without constraint propagation"
+      }
+    ],
+    "large_adversarial": [
+      {
+        "name": "no_solution_exists",
+        "kills": "backtracking without pruning",
+        "construction_algorithm": "# N-Queens: use N=15 with a board configuration that has no solution path pruned early\n# Forces full tree exploration\nN = 15",
+        "why_works": "Without pruning, explores all N! permutations. With pruning, most branches cut early. No-solution case forces maximum exploration.",
+        "optimal_safe": "Pruning cuts invalid branches at depth 1-2, reducing to manageable subtrees."
+      }
+    ],
+    "edge_cases": [
+      {
+        "name": "minimum_n",
+        "construction_algorithm": "N=1 for N-Queens style, trivial solution",
+        "bug_caught": "base case return, solution found check"
+      },
+      {
+        "name": "n_equals_2_or_3",
+        "construction_algorithm": "N=2 or N=3 where no solution exists for N-Queens",
+        "bug_caught": "handling no-solution case, returning empty vs crashing"
+      }
+    ],
+    "constraint_budget": {
+      "O(n!)": {
+        "n_limit": 10,
+        "reasoning": "10! = 3.6M, manageable. 12! = 479M → TLE"
+      },
+      "O(2^n)": {
+        "n_limit": 20,
+        "reasoning": "2^20 = 1M, manageable. 2^25 → TLE"
+      }
+    }
+  },
+
+  "Union Find": {
+    "suboptimal_algorithms": [
+      {
+        "name": "Union Find without path compression",
+        "complexity": "O(N) per find in worst case",
+        "how_common": "students who implement basic union without optimization"
+      }
+    ],
+    "large_adversarial": [
+      {
+        "name": "long_union_chain",
+        "kills": "union-find without path compression",
+        "construction_algorithm": "# Union in sequence: union(1,2), union(2,3), union(3,4)... union(N-1,N)\n# Then query find(1) — must traverse entire chain\nfor i in range(1, N): print(f'union {i} {i+1}')\nprint(f'find 1')",
+        "why_works": "Chain creates a tree of depth N-1. find(1) traverses all N nodes without path compression. O(N) per query × Q queries = O(NQ).",
+        "optimal_safe": "Path compression makes find() O(α(N)) ≈ O(1) amortized."
+      }
+    ],
+    "edge_cases": [
+      {
+        "name": "self_union",
+        "construction_algorithm": "union(i, i) for various i",
+        "bug_caught": "self-loop in parent array"
+      },
+      {
+        "name": "already_same_component",
+        "construction_algorithm": "union nodes already in same component",
+        "bug_caught": "redundant union handling, cycle detection"
+      }
+    ],
+    "constraint_budget": {
+      "O(n alpha(n))": {
+        "sum_n_limit": 100000,
+        "sum_q_limit": 100000
+      }
+    }
+  },
+
+  "Monotonic Stack": {
+    "suboptimal_algorithms": [
+      {
+        "name": "Brute force O(N²) scan for next greater/smaller",
+        "complexity": "O(N²)",
+        "how_common": "students who don't know monotonic stack trick"
+      }
+    ],
+    "large_adversarial": [
+      {
+        "name": "full_stack_clear_at_end",
+        "kills": "O(N²) scan",
+        "construction_algorithm": "# Strictly increasing then one very large value at end\n# arr = [1, 2, 3, 4, ..., N-1, 10^9]\n# Forces O(N) stack clear at last element\narr = list(range(1, N)) + [10**9]",
+        "why_works": "Naive O(N²) scans right for each element. N-1 elements have answer at index N-1, causing N² total comparisons.",
+        "optimal_safe": "Monotonic stack processes each element at most twice (push + pop). O(N) total."
+      }
+    ],
+    "edge_cases": [
+      {
+        "name": "strictly_decreasing",
+        "construction_algorithm": "arr = list(range(N, 0, -1))",
+        "bug_caught": "no element is ever popped from stack (next greater never exists)"
+      },
+      {
+        "name": "all_equal",
+        "construction_algorithm": "arr = [5] * N",
+        "bug_caught": "strict vs non-strict comparison in stack condition"
+      }
+    ],
+    "constraint_budget": {
+      "O(n)": {
+        "sum_n_limit": 1000000,
+        "recommended_T": 10,
+        "n_per_case": 100000
+      }
+    }
+  }
+}
