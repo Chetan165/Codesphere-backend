@@ -7,6 +7,23 @@ import path from "path";
 import archiver from "archiver";
 console.log("CE Worker started");
 
+const createZip = (sourcePath, destPath, isDirectory = true) => {
+  return new Promise((resolve, reject) => {
+    const output = fs.createWriteStream(destPath);
+    const archive = archiver("zip", { zlib: { level: 9 } });
+
+    output.on("close", () => resolve(destPath)); // ✅ File fully written
+    output.on("error", reject);
+    archive.on("error", reject);
+
+    archive.pipe(output);
+    if (isDirectory) {
+      archive.directory(sourcePath, false);
+    }
+    archive.finalize();
+  });
+};
+
 const sleep = async () => {
   const P = new Promise((resolve, reject) => {
     const interval = setTimeout(() => {
@@ -37,10 +54,6 @@ const fetchJobAndUpdate = async () => {
     return { success: false, message: "No queued job" };
   } else {
     console.log("[CE WORKER] Claimed job:", job.jobid);
-    db.prepare("UPDATE jobs SET status=? WHERE jobid=?").run(
-      "completed",
-      job.jobid,
-    );
     return { success: true, jobid: job.jobid };
   }
 };
@@ -63,6 +76,13 @@ while (true) {
           "inputCode.py",
           {},
         );
+        if (resultInputGen.exitCode !== 0 || resultInputGen.error) {
+          throw new Error(
+            `inputCode.py failed. Exit: ${resultInputGen.exitCode}. ` +
+              `Stderr: ${resultInputGen.stderr}. ` +
+              `Error: ${resultInputGen.error}`,
+          );
+        }
         console.log(
           "[CE WORKER] Docker execution completed for job:",
           Jobdata.jobid,
@@ -112,6 +132,7 @@ while (true) {
       // Creating zip and testcase dir
       const testcasesDir = path.join(folderPath, "Testcases");
       const testcasesZip = path.join(folderPath, "Testcases.zip");
+      const zipPath = path.join("./", Jobdata.jobid + ".zip");
       fse.ensureDirSync(testcasesDir);
       fse.copySync(
         path.join(folderPath, "input"),
@@ -121,23 +142,12 @@ while (true) {
         path.join(folderPath, "output"),
         path.join(testcasesDir, "output"),
       );
-      let output = fs.createWriteStream(testcasesZip);
-      let archive = archiver("zip", {
-        zlib: { level: 9 },
-      });
-      archive.pipe(output);
-      archive.directory(testcasesDir, false);
-      await archive.finalize();
 
-      //zipping the entire job folder
-      const zipPath = path.join("./", Jobdata.jobid + ".zip");
-      let jobOutput = fs.createWriteStream(zipPath);
-      const archiveJob = archiver("zip", {
-        zlib: { level: 9 },
-      });
-      archiveJob.pipe(jobOutput);
-      archiveJob.directory(folderPath, false);
-      await archiveJob.finalize();
+      // Now zip — directory exists and has content
+      await createZip(testcasesDir, testcasesZip);
+
+      await createZip(folderPath, zipPath);
+
       console.log("[CE WORKER] Zipped job folder for job:", Jobdata.jobid);
       // Update job status to completed
       db.prepare("UPDATE jobs SET status=? WHERE jobid=?").run(
