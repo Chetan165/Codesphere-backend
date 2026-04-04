@@ -6,6 +6,51 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const axios = require("axios");
 const { diff } = require("util");
 const apiKey = process.env.GEMINI_API_KEY;
+const buildReasoningPrompt = require("../LLMPromptBuilder/buildReasoningPrompt.js");
+const buildInputCodePrompt = require("../LLMPromptBuilder/buildInputCodePrompt.js");
+const buildOutputCodePrompt = require("../LLMPromptBuilder/buildOutputCodePrompt.js");
+
+function buildKnowledgeInjection(tags, complexity, selectedTypes, knowledge) {
+  if (!tags || tags.length === 0) return { matched: false };
+
+  // Try each tag against knowledge keys
+  for (const tag of tags) {
+    const normalized = tag.charAt(0).toUpperCase() + tag.slice(1).toLowerCase();
+    const entry = knowledge[normalized];
+    if (!entry) continue;
+
+    return {
+      matched: true,
+      tag: normalized,
+      suboptimal_algorithms: entry.suboptimal_algorithms,
+      constraints: entry.constraint_budget?.[complexity] || null,
+      patterns: {
+        large: selectedTypes.includes("large")
+          ? entry.large_adversarial
+          : undefined,
+        edge: selectedTypes.includes("edge") ? entry.edge_cases : undefined,
+      },
+    };
+  }
+
+  return { matched: false };
+}
+
+function extractJSON(text) {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end === -1) throw new Error("No JSON in response");
+  return JSON.parse(text.slice(start, end + 1));
+}
+
+function extractPython(text) {
+  // Strip markdown fences if present
+  const fenceMatch = text.match(/```python\n([\s\S]*?)```/);
+  if (fenceMatch) return fenceMatch[1].trim();
+  const genericFence = text.match(/```\n([\s\S]*?)```/);
+  if (genericFence) return genericFence[1].trim();
+  return text.trim();
+}
 
 module.exports = {
   // prob generation using LLM
@@ -195,20 +240,18 @@ Return the result as a JSON object with these fields:
 
   // generate Code for testcase generation
   genAITestcases: async (req, res) => {
-    const { sessionId, numTestcases, testcaseTypes, expectedComplexity } =
+    const { sessionId, numTestcases, testcaseTypes, expectedComplexity, tags } =
       req.body;
     const fs = require("fs");
     const path = require("path");
     const { GoogleGenerativeAI } = require("@google/generative-ai");
-    const apiKey = process.env.GEMINI_API_KEY;
 
+    // ── Load problem context ──────────────────────────────────────────
     const tempDir = path.join(__dirname, "../uploads", sessionId);
     const genaiPath = path.join(tempDir, "genai_response.json");
-    if (!fs.existsSync(genaiPath)) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "Session or problem context not found" });
-    }
+    if (!fs.existsSync(genaiPath))
+      return res.status(400).json({ ok: false, error: "Session not found" });
+
     const problemData = JSON.parse(fs.readFileSync(genaiPath, "utf-8"));
     const {
       problemStatement,
@@ -220,208 +263,113 @@ Return the result as a JSON object with these fields:
       sampleOutput,
     } = problemData;
 
-    // Build prompt for Gemini
-    const prompt = `
-Given the following competitive programming problem:
+    const complexity = expectedComplexity || "infer from solution";
 
-Problem Statement:
-${problemStatement}
+    // ── Load knowledge base and build injection ───────────────────────
+    const knowledgePath = path.join(
+      __dirname,
+      "../metadata/adversarial_patterns.json",
+    );
+    const knowledge = JSON.parse(fs.readFileSync(knowledgePath, "utf-8"));
+    const injection = buildKnowledgeInjection(
+      tags,
+      complexity,
+      testcaseTypes,
+      knowledge,
+    );
 
-Input Format:
-${inputFormat}
+    // ── Build the file list the LLM must generate ─────────────────────
+    const fileList = testcaseTypes.map((type, i) => ({
+      index: String(i).padStart(2, "0"),
+      type: type,
+      filename: `input/input${String(i).padStart(2, "0")}.txt`,
+    }));
 
-Output Format:
-${outputFormat}
+    const genai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genai.getGenerativeModel({ model: "gemini-2.5-flash" });
 
-Constraints:
-${constraints}
+    // ── CALL 1: Reasoning (returns JSON analysis, no code) ───────────
+    const reasoningPrompt = buildReasoningPrompt(
+      {
+        problemStatement,
+        inputFormat,
+        outputFormat,
+        constraints,
+        sampleInput,
+        sampleOutput,
+      },
+      complexity,
+      tags,
+      fileList,
+      injection,
+    );
+    const reasoningRaw = await model.generateContent(reasoningPrompt);
+    const reasoningText = reasoningRaw.response.text();
+    const reasoning = extractJSON(reasoningText);
 
-You are to generate code for test case generation and output generation as follows:
+    // ── CALL 2: inputGenCode (raw Python, no JSON wrapper) ───────────
+    const inputCodePrompt = buildInputCodePrompt(
+      { problemStatement, inputFormat, constraints, sampleInput },
+      reasoning,
+      fileList,
+      injection,
+    );
+    const inputCodeRaw = await model.generateContent(inputCodePrompt);
+    const inputGenCode = extractPython(inputCodeRaw.response.text());
 
-here is the definition/expectation of different testcase types that can be generated, DO NOT MAKE ALL ONLY WRITE LOGIC FOR THOSE WHICH ARE ASKED AFTER THIS DEFINITION:
+    // ── CALL 3: outputGenCode (raw Python, no JSON wrapper) ──────────
+    const outputCodePrompt = buildOutputCodePrompt(
+      { inputFormat, outputFormat, solution },
+      fileList,
+    );
+    const outputCodeRaw = await model.generateContent(outputCodePrompt);
+    const outputGenCode = extractPython(outputCodeRaw.response.text());
 
-For "sample", generate a simple, clear, and illustrative test case suitable for display to users as an example, use the sample testcase as given in ${sampleInput} & ${sampleOutput}.
-For "edge", generate a test case that targets the boundaries or special conditions of the problem (e.g., minimum/maximum values, empty or single-element cases, or other tricky scenarios or MOST IMPORTANT : Questions Specific Edge Case if you know it), but do not make it unnecessarily large—focus on what would best test edge behavior.
-For "large", generate a test case that is as big and complex as allowed by the constraints, designed to test performance and efficiency, but always within the problem's limits and logic (PUT T and N both AS MAX AS ALLOWED !!!!! ).
-For "generic", generate a test case with random values within the allowed constraints, ensuring it is valid and diverse.
-Each function should be tailored to its specific type, not just randomly generated. The logic and data should be chosen to best represent the intent of each testcase type in the context of the problem and its constraints.
+    // ── Save both scripts ─────────────────────────────────────────────
+    fs.writeFileSync(path.join(tempDir, "inputGenCode.py"), inputGenCode);
+    fs.writeFileSync(path.join(tempDir, "outputGenCode.py"), outputGenCode);
+    fs.writeFileSync(
+      path.join(tempDir, "reasoning.json"),
+      JSON.stringify(reasoning, null, 2),
+    );
 
-1. inputGenCode: A single Python script that defines ${numTestcases} functions to generate each of the types as specified by [${testcaseTypes.join(", ")}], 
-For each testcase type specified in ${testcaseTypes.join(", ")}, write a separate function named generate_inputXX (e.g., generate_input00 for "sample", generate_input01 for "edge", etc.). For each function, carefully consider what makes a high-quality test case of that type for the given problem and constraints:
-
-
-each named generate_inputXX (e.g., generate_input00, generate_input01, ...),. Each function must:
-- Generate a valid test case strictly within the problem's constraints (never exceeding them).
-- Save the test case to a file named input/inputXX.txt (e.g., input00.txt, input01.txt, ...).
-- The input format for every generated file must follow the problem's input format, add parameters as per the requirements of the question inputformat (This should match the input format described in the problem statement.)
-- The values of T and the length/size of each testcase should never exceed the maximum input length expected for the given expected time complexity e.g (for O(n) i can have T=100 and if array is there for every t of T then max len of arr=10^5-6 (JUST FOR EXAMPLE, THINK AND DECIDE THESE BASED ON PROBLEM))(${expectedComplexity || "of the solution"}).
-- Ensure the testcases include well thought-out edge cases, such as minimum/maximum values, sorted/unsorted data, all equal elements, and any other relevant edge scenarios for the problem.
-- ensure that if asked for , the first i.e input00.txt and output00.tx is a sample testcase which is provided : ${sampleInput} and ${sampleOutput}
-
-2. outputGenCode: A Python script that, given the provided solution code and the generated input files, reads each input/inputXX.txt, runs the solution, and writes the output to output/outputXX.txt. The script must:
-- Use the provided solution code (below) as a function or module.
-- Ensure outputs are correct and correspond to the generated inputs.
-
-Provided solution code:
-"""
-${solution}
-"""
-
-IMPORTANT: Return ONLY a valid JSON object. Do NOT include any explanatory text before or after the JSON.
-- Ensure all strings are properly escaped with \\n for newlines
-- Do NOT use literal line breaks inside JSON string values
-- The response must start with { and end with }
-
-Return your response as a JSON object with these fields:
-{
-  "inputGenCode": "...python code...",
-  "outputGenCode": "...python code..."
-}
-`;
-    // const prompt2=const prompt = `
-    // Given the following competitive programming problem:
-
-    // Problem Statement:
-    // ${problemStatement}
-
-    // Input Format:
-    // ${inputFormat}
-
-    // Output Format:
-    // ${outputFormat}
-
-    // Constraints:
-    // ${constraints}
-
-    // You are to generate code for test case generation and output generation as follows:
-
-    // here is the definition/expectation of different testcase types that can be generated, DO NOT MAKE ALL ONLY WRITE LOGIC FOR THOSE WHICH ARE ASKED AFTER THIS DEFINITION:
-
-    // For "sample":
-    //   generate a simple, clear, and illustrative test case suitable for display to users as an example, use the sample testcase as given in ${sampleInput} & ${sampleOutput}.
-    // For "edge":
-    //   generate a test case that targets the boundaries or special conditions of the problem (e.g., minimum/maximum values, empty or single-element cases, or other tricky scenarios or MOST IMPORTANT : Questions Specific Edge Case if you know it), but do not make it unnecessarily large—focus on what would best test edge behavior.
-    // For "large":
-    //    generate a test case that acts as an adversarial performance test. Do not simply use random values. Instead:Analyze Suboptimal Approaches: Identify likely brute-force strategies for this problem. Target Worst-Case Structures: Design the data structure to maximize the operations of those suboptimal strategies (e.g., if the problem involves searching, use "V-shapes," "Deeply Nested structures," "Long Plateaus," or "Monotonic Sequences").Maximize Constraints: Force $T$ and $N$ (or the equivalent sum of $N$) to the absolute maximum allowed by the constraints.Complexity Barrier: The goal is to ensure that while an optimized solution eg (nlogn or O(n)) passes comfortably, question specific brute force approach will strictly Time Limit Exceed (TLE).
-    // For "generic":
-    //   generate a test case with random values within the allowed constraints, ensuring it is valid and diverse.
-
-    //   Each function should be tailored to its specific type, not just randomly generated. The logic and data should be chosen to best represent the intent of each testcase type in the context of the problem and its constraints.
-
-    // When generating 'large' cases, prioritize patterns that break naive solutions over randomness. For example, in range-query or stack problems, use strictly increasing/decreasing sequences or zig-zags
-
-    // 1. inputGenCode: A single Python script that defines ${numTestcases} functions to generate each of the types as specified by [${testcaseTypes.join(", ")}],
-    // For each testcase type specified in ${testcaseTypes.join(", ")}, write a separate function named generate_inputXX (e.g., generate_input00 for "sample", generate_input01 for "edge", etc.). For each function, carefully consider what makes a high-quality test case of that type for the given problem and constraints:
-
-    // each named generate_inputXX (e.g., generate_input00, generate_input01, ...),. Each function must:
-    // - Generate a valid test case strictly within the problem's constraints (never exceeding them).
-    // - Save the test case to a file named input/inputXX.txt (e.g., input00.txt, input01.txt, ...).
-    // - The input format for every generated file must follow the problem's input format, add parameters as per the requirements of the question inputformat (This should match the input format described in the problem statement.)
-    // - The values of T and the length/size of each testcase should never exceed the maximum input length expected for the given expected time complexity e.g (for O(n) i can have T=100 and if array is there for every t of T then max len of arr=10^5-6 (JUST FOR EXAMPLE, THINK AND DECIDE THESE BASED ON PROBLEM))(${expectedComplexity || "of the solution"}).
-    // - Ensure the testcases include well thought-out edge cases, such as minimum/maximum values, sorted/unsorted data, all equal elements, and any other relevant edge scenarios for the problem.
-    // - ensure that if asked for , the first i.e input00.txt and output00.tx is a sample testcase which is provided : ${sampleInput} and ${sampleOutput}
-
-    // 2. outputGenCode: A Python script that, given the provided solution code and the generated input files, reads each input/inputXX.txt, runs the solution, and writes the output to output/outputXX.txt. The script must:
-    // - Use the provided solution code (below) as a function or module.
-    // - Ensure outputs are correct and correspond to the generated inputs.
-
-    // Provided solution code:
-    // """
-    // ${solution}
-    // """
-
-    // IMPORTANT: Return ONLY a valid JSON object. Do NOT include any explanatory text before or after the JSON.
-    // - Ensure all strings are properly escaped with \\n for newlines
-    // - Do NOT use literal line breaks inside JSON string values
-    // - The response must start with { and end with }
-
-    // Return your response as a JSON object with these fields:
-    // {
-    //   "inputGenCode": "...python code...",
-    //   "outputGenCode": "...python code..."
-    // }
-    // `;
-
-    try {
-      const genAI = new GoogleGenerativeAI(apiKey);
-      console.log("Gemini TestcaseGen Prompt:", prompt);
-      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-      const result = await model.generateContent(prompt);
-      let responseText = result.response.text();
-      console.log("Gemini TestcaseGen Response:", responseText);
-      responseText = responseText.replace(/```json|```/g, "").trim();
-
-      // Additional JSON sanitization for testcase generation
-      try {
-        // Extract JSON object from response (may have explanatory text before/after)
-        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          responseText = jsonMatch[0];
-        }
-
-        // Remove any trailing commas before closing braces/brackets
-        responseText = responseText.replace(/,(\s*[}\]])/g, "$1");
-      } catch (cleanErr) {
-        console.warn("[TestcaseGen]Cleaning warning:", cleanErr);
-      }
-
-      console.log("Cleaned TestcaseGen Response:", responseText);
-      let codeResponse;
-      try {
-        codeResponse = JSON.parse(responseText);
-      } catch (jsonErr) {
-        console.error("JSON parse error (testcaseGen):", jsonErr);
-        console.error("[TestcaseGen]Failed at position:", jsonErr.message);
-
-        // Try to provide more helpful debugging info
-        if (jsonErr.message.includes("position")) {
-          const posMatch = jsonErr.message.match(/position (\d+)/);
-          if (posMatch) {
-            const pos = parseInt(posMatch[1]);
-            const context = responseText.substring(
-              Math.max(0, pos - 50),
-              Math.min(responseText.length, pos + 50),
-            );
-            console.error("[TestcaseGen]Error context:", context);
-          }
-        }
-
-        res.status(500).json({
-          ok: false,
-          error: "JSON parse error: " + jsonErr.message,
-          raw: responseText,
-        });
-        return;
-      }
-      fs.writeFileSync(
-        path.join(tempDir, "inputGenCode.py"),
-        codeResponse.inputGenCode,
-      );
-      fs.writeFileSync(
-        path.join(tempDir, "outputGenCode.py"),
-        codeResponse.outputGenCode,
-      );
-      res.json({
-        ok: true,
-        inputGenCode: codeResponse.inputGenCode,
-        outputGenCode: codeResponse.outputGenCode,
-      });
-    } catch (err) {
-      res.status(500).json({ ok: false, error: err.message });
-    }
+    return res.json({ ok: true, sessionId, reasoning });
   },
 
   //CE logic to run
 
   runPipeline: async (req, res) => {
+    const fs = require("fs");
+    const path = require("path");
     const data = req.body;
+    const sessionId = data.jobid;
+    const dir = path.join(__dirname, "../uploads", sessionId);
+
+    const inputCode = fs.readFileSync(
+      path.join(dir, "inputGenCode.py"),
+      "utf-8",
+    );
+    const outputCode = fs.readFileSync(
+      path.join(dir, "outputGenCode.py"),
+      "utf-8",
+    );
+    const metaData = JSON.parse(
+      fs.readFileSync(path.join(dir, "genai_response.json"), "utf-8"),
+    );
+    const jobData = {
+      jobid: sessionId,
+      inputCode,
+      outputCode,
+      MetaData: metaData,
+    };
+
     try {
       const response = await fetch("http://localhost:5000/CEPipeline", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(data),
+        body: JSON.stringify(jobData),
       });
       const result = await response.json();
       res.json({ ok: true, result });
