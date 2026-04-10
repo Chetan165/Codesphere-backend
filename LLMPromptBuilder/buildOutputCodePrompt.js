@@ -30,6 +30,32 @@ The script must:
 4. The solve() function is embedded from the solution code above.
    Do not import it. Paste it directly into the script.
 
+RULES FOR STDIN/STDOUT:
+- NEVER use contextlib.redirect_stdin (does not exist)
+- ALWAYS use: sys.stdin = io.StringIO(file_content)
+- ALWAYS use: sys.stdout = io.StringIO()
+- ALWAYS restore with sys.__stdin__ and sys.__stdout__ (double underscore)
+  not the variable you saved earlier - use the dunder versions
+- Discover input files with glob.glob("input/input*.txt")
+  never hardcode ["00", "01", "02"]
+
+CRITICAL: Do NOT use contextlib.redirect_stdin — it does not exist in Python.
+Do NOT use contextlib for stdin redirection at all.
+
+The ONLY correct way to redirect stdin in this environment:
+    sys.stdin = open(input_filename, 'r')
+or
+    sys.stdin = io.StringIO(file_content)
+
+The ONLY correct way to redirect stdout:
+    sys.stdout = io.StringIO()
+    # run solve()
+    output = sys.stdout.getvalue()
+
+Always restore after:
+    sys.stdin  = sys.__stdin__
+    sys.stdout = sys.__stdout__
+
 Return ONLY the Python code. No explanation. No markdown fences.`;
 }
 

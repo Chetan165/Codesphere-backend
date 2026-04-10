@@ -2,6 +2,9 @@ function buildInputCodePrompt(problem, reasoning, fileList, injection) {
   const functionList = fileList
     .map((f) => `generate_input${f.index}()  →  ${f.filename}  [${f.type}]`)
     .join("\n");
+  const functionCalls = fileList
+    .map((f) => `    generate_input${f.index}()`)
+    .join("\n");
 
   const largeCase = reasoning.testcases?.find((t) => t.type === "large");
 
@@ -57,6 +60,15 @@ ${problem.sampleInput}
    # TYPE: [type]
    # TARGETS: [what suboptimal algorithm this stresses]
    # SUM_N: [sum of all n values written]
+
+9. MANDATORY EXECUTION BLOCK (required):
+   After all function definitions, append exactly this entrypoint pattern and call
+   every generate_inputXX() function exactly once:
+
+   if __name__ == "__main__":
+${functionCalls}
+
+   Do not omit this block. Do not leave functions uncalled.
 
 Return ONLY the Python code. No JSON. No explanation. No markdown fences.
 Start with: import random`;
