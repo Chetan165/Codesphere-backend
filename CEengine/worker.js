@@ -1,18 +1,32 @@
 import db from "./sqliteDB.js";
 import fs from "fs";
 import fse from "fs-extra";
-import runInDocker from "./runInDocker.js";
+import runInDocker, { ensureDockerImageReady } from "./runInDocker.js";
 import CreateMdFile from "./CreateMdFile.js";
 import path from "path";
 import archiver from "archiver";
 console.log("CE Worker started");
+
+ensureDockerImageReady().then(({ ready, pulled }) => {
+  if (ready && pulled) {
+    console.log("[CE WORKER] Docker image pre-pulled: python:3.11-slim");
+    return;
+  }
+  if (ready) {
+    console.log("[CE WORKER] Docker image already available: python:3.11-slim");
+    return;
+  }
+  console.warn(
+    "[CE WORKER] Could not pre-pull image. Job execution will still attempt docker run.",
+  );
+});
 
 const createZip = (sourcePath, destPath, isDirectory = true) => {
   return new Promise((resolve, reject) => {
     const output = fs.createWriteStream(destPath);
     const archive = archiver("zip", { zlib: { level: 9 } });
 
-    output.on("close", () => resolve(destPath)); // ✅ File fully written
+    output.on("close", () => resolve(destPath)); //
     output.on("error", reject);
     archive.on("error", reject);
 
