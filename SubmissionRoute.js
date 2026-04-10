@@ -20,18 +20,18 @@ router.post("/submit", async (req, res) => {
       language_id: languageId,
       stdin: tc.input,
       expected_output: tc.output,
-      cpu_time_limit: 5,
+      cpu_time_limit: 2,
       memory_limit: 128000,
     }));
 
     const judgeRes = await fetch(
       //submit in batch all the testcase
-      "http://13.234.14.231:2358/submissions/batch?base64_encoded=false&wait=false",
+      "http://localhost:2358/submissions/batch?base64_encoded=false&wait=false",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ submissions }),
-      }
+      },
     );
 
     const judgeData = await judgeRes.json(); //retrive the response containing tokens

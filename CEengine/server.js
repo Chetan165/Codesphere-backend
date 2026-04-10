@@ -8,6 +8,7 @@ app.post("/CEPipeline", async (req, res) => {
   // Logic for CE Pipeline
   const data = req.body;
   data.MetaData = JSON.stringify(data.MetaData);
+  console.log("data received at CE Pipeline:", data);
   await db
     .prepare(
       "INSERT INTO jobs(jobid,inputCode,outputCode,MetaData) VALUES (?,?,?,?)",
