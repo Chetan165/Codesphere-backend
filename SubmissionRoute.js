@@ -24,9 +24,10 @@ router.post("/submit", async (req, res) => {
       memory_limit: 128000,
     }));
 
+    const APP_CONFIG = require("./config/appConfig");
     const judgeRes = await fetch(
       //submit in batch all the testcase
-      "http://localhost:2358/submissions/batch?base64_encoded=false&wait=false",
+      `${APP_CONFIG.JUDGE0_URL}/submissions/batch?base64_encoded=false&wait=false`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },

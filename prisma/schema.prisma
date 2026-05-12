@@ -47,9 +47,11 @@ model Problem {
   sampleInput  String
   sampleOutput String
   constraints String
+  explanation String    @default("") // New field for problem explanation
   testCases   TestCase[]
   contests    Contest[]     @relation("ContestProblems")
   submissions Submission[]
+  MaxScore    Int           @default(100)
 }
 
 model TestCase {
@@ -58,7 +60,7 @@ model TestCase {
   output     String
   problem    Problem  @relation(fields: [problemId], references: [id])
   problemId  String
-  isPublic   Boolean  
+  isPublic   Boolean  @default(false) // Whether this test case is visible to users before submission
 }
 
 model Submission {
@@ -69,6 +71,8 @@ model Submission {
   problemId  String
   contest    Contest  @relation(fields: [contestId], references: [id])
   contestId  String
+  passedCount Int     @default(0)
+  totalCount  Int     @default(0)
   language   String
   code       String
   verdict    String    // e.g. "Accepted", "Wrong Answer", etc.

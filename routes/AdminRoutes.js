@@ -7,6 +7,7 @@ const AutocraftRouter = require("./Autocraft");
 
 // Contest routes
 Router.post("/contest", isloggedin, contestController.createContest);
+Router.put("/contest/:id", isloggedin, contestController.updateContest);
 Router.post("/contest/problem", isloggedin, contestController.createProblem);
 Router.use("/autocraft", AutocraftRouter);
 

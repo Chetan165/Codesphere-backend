@@ -1,11 +1,13 @@
 const Prisma = require("../db/PrismaClient.js");
 
+const APP_CONFIG = require("../config/appConfig");
+
 const root = (req, res) => {
   res.send('<body><a href="/auth/google">Authenticate</a></body>');
 };
 
 const protectedRoute = (req, res) => {
-  res.redirect("http://localhost:5173/Dashboard");
+  res.redirect(`${APP_CONFIG.FRONTEND_BASE}/Dashboard`);
 };
 
 const googleCallback = async (req, res) => {
@@ -17,7 +19,7 @@ const googleCallback = async (req, res) => {
     });
     res.redirect("/protected");
   } else {
-    res.redirect("http://localhost:5173/Register");
+    res.redirect(`${APP_CONFIG.FRONTEND_BASE}/Register`);
   }
 };
 
@@ -41,7 +43,7 @@ const register = async (req, res) => {
   try {
     const check = await Prisma.User.findMany({ where: { id: uid } });
     if (check.length > 0) {
-      return res.status(400).json({ ok: false });
+      return res.status(400).json({ ok: false, msg: "User already exists" });
     } else {
       const user = await Prisma.User.create({
         data: {

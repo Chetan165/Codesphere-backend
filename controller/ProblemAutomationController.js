@@ -12,6 +12,8 @@ const buildReasoningPrompt = require("../LLMPromptBuilder/buildReasoningPrompt.j
 const buildInputCodePrompt = require("../LLMPromptBuilder/buildInputCodePrompt.js");
 const buildOutputCodePrompt = require("../LLMPromptBuilder/buildOutputCodePrompt.js");
 const buildSolutionGuidance = require("../metadata/buildSolutionGuidance.js");
+const Anthropic = require("@anthropic-ai/sdk");
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // function buildKnowledgeInjection(tags, complexity, selectedTypes, knowledge) {
 //   if (!tags || tags.length === 0) return { matched: false };
@@ -38,6 +40,25 @@ const buildSolutionGuidance = require("../metadata/buildSolutionGuidance.js");
 
 //   return { matched: false };
 // }
+
+async function callClaude(prompt, useThinking = true) {
+  const config = {
+    model: "claude-opus-4-6",
+    max_tokens: 16000,
+    messages: [{ role: "user", content: prompt }],
+  };
+
+  if (useThinking) {
+    config.thinking = {
+      type: "enabled",
+      budget_tokens: 10000,
+    };
+  }
+
+  const response = await anthropic.messages.create(config);
+  const textBlock = response.content.find((b) => b.type === "text");
+  return textBlock?.text || "";
+}
 
 function extractJSON(text) {
   const start = text.indexOf("{");
@@ -90,7 +111,6 @@ module.exports = {
     const { tags, difficulty, questionStyle } = req.body;
     const expectedComplexity = req.body.expectedComplexity || null;
 
-    // create session folder for this generation request
     const sessionId = uuidv4();
     const tempDir = path.join(__dirname, "../uploads", sessionId);
     fs.mkdirSync(tempDir, { recursive: true });
@@ -100,8 +120,6 @@ module.exports = {
     );
 
     const knowledge = require("../metadata/adversarial_patterns.json");
-
-    // Find best matching tag and pull everything about it
     const primaryTag =
       tagPriority.find((t) => tags.includes(t) && knowledge[t]) ??
       tags.find((t) => knowledge[t]);
@@ -125,12 +143,12 @@ ${
   tagKnowledge
     ? `
 REFERENCE KNOWLEDGE FOR THIS PROBLEM TYPE (${primaryTag}):
-CRITICAL:dont use this as it is, decide the appropriate subcategory of the problem from this, use suboptimal algorithms and pitfalls as they are along with recommendations for T,n sum_n etc for each testcase type.
+CRITICAL: dont use this as it is, decide the appropriate subcategory of the problem from this, use suboptimal algorithms and pitfalls as they are along with recommendations for T, n, sum_n etc for each testcase type.
 
 Common suboptimal approaches students will submit:
 ${tagKnowledge.suboptimal_algorithms?.map((a) => `- ${a.name}: ${a.complexity} — ${a.how_common}`).join("\n")}
 
-Constraint budget:
+Constraint budget reference:
 ${JSON.stringify(tagKnowledge.constraint_budget, null, 2)}
 
 Known pitfall for this topic: ${tagKnowledge.pitfall || "See suboptimal algorithms above"}
@@ -143,16 +161,16 @@ CONSTRAINT REQUIREMENTS:
 - Calibrate T and N so that:
   ${
     difficulty === "Easy"
-      ? "- Constraints are relaxed. A simple brute force O(n²) may pass if the problem is straightforward. Use smaller N."
+      ? "Constraints are relaxed. A simple brute force O(n²) may pass if the problem is straightforward. Use smaller N."
       : difficulty === "Hard"
-        ? "- Constraints are tight. Only the optimal solution passes. Brute force must TLE by a large margin."
-        : "- Moderate. The optimal solution passes comfortably. A naive O(n²) should TLE for large inputs."
+        ? "Constraints are tight. Only the optimal solution passes. Brute force must TLE by a large margin."
+        : "Moderate. The optimal solution passes comfortably. A naive O(n²) should TLE for large inputs."
   }
 - The sum of all N across all T testcases in one file must be bounded
-  (reference the constraint budget above and adapt to your problem)
 - Always state explicit constraints: ranges for T, N, and value limits
+- CRITICAL: sampleInput/Output must be absolutely valid and follow the stated formats and constraints
 
-Return JSON with exactly:
+Return ONLY a valid JSON object, no explanation, no markdown fences, starting with { and ending with }:
 {
   "problemStatement": "...",
   "inputFormat": "...",
@@ -187,16 +205,28 @@ REQUIREMENTS:
 Return ONLY Python code. No markdown fences.`;
 
     try {
-      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-      const jsonModel = genAI.getGenerativeModel({
-        model: "gemini-2.5-flash",
+      const gemini = new GoogleGenerativeAI(apiKey);
+      const jsonModel = gemini.getGenerativeModel({
+        model: "gemini-3-flash-preview",
         generationConfig: { responseMimeType: "application/json" },
       });
-      const textModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+      const textModel = gemini.getGenerativeModel({
+        model: "gemini-3-flash-preview",
+      });
 
+      // Call 1 — Problem statement (Gemini JSON mode)
       const problemResult = await jsonModel.generateContent(problemPrompt);
       const problemData = JSON.parse(problemResult.response.text());
+      console.log(
+        "[genAIProblem] Problem generated:",
+        problemData.problemStatement?.slice(0, 80),
+      );
+      console.log(
+        "[genAIProblem] Inferred complexity:",
+        problemData.inferredComplexity,
+      );
 
+      // Call 2 — Solution (Gemini text mode)
       const solutionResult = await textModel.generateContent(
         buildSolutionPrompt(problemData),
       );
@@ -210,8 +240,6 @@ Return ONLY Python code. No markdown fences.`;
         solution: solutionCode,
         tags,
         difficulty,
-        // Always saved — either user provided or LLM inferred
-        // Step 2 reads this to know which adversarial patterns to use
         expectedComplexity:
           expectedComplexity || problemData.inferredComplexity,
       };
@@ -288,40 +316,43 @@ Return ONLY Python code. No markdown fences.`;
     }));
 
     const genai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genai.getGenerativeModel({ model: "gemini-2.5-flash" });
-
-    const reasoningRaw = await model.generateContent(
-      buildReasoningPrompt(
-        {
-          problemStatement,
-          inputFormat,
-          outputFormat,
-          constraints,
-          sampleInput,
-          sampleOutput,
-        },
-        expectedComplexity,
-        tags,
-        fileList,
-        injection,
-      ),
+    const model = genai.getGenerativeModel({ model: "gemini-3-flash-preview" });
+    const ReasoningPrompt = buildReasoningPrompt(
+      {
+        problemStatement,
+        inputFormat,
+        outputFormat,
+        constraints,
+        sampleInput,
+        sampleOutput,
+      },
+      expectedComplexity,
+      tags,
+      fileList,
+      injection,
     );
+    // const reasoningText = await callClaude(ReasoningPrompt);
+    // const reasoning = extractJSON(reasoningText);
+    const reasoningRaw = await model.generateContent(ReasoningPrompt);
     const reasoning = extractJSON(reasoningRaw.response.text());
 
-    const inputCodeRaw = await model.generateContent(
-      buildInputCodePrompt(
-        { problemStatement, inputFormat, constraints, sampleInput },
-        reasoning,
-        fileList,
-        injection,
-      ),
+    const inputCodePrompt = buildInputCodePrompt(
+      { problemStatement, inputFormat, constraints, sampleInput },
+      reasoning,
+      fileList,
+      injection,
     );
+    const inputCodeRaw = await model.generateContent(inputCodePrompt);
     const inputGenCode = extractPython(inputCodeRaw.response.text());
-
-    const outputCodeRaw = await model.generateContent(
-      buildOutputCodePrompt({ inputFormat, outputFormat, solution }, fileList),
+    // const inputGenCode = extractPython(await callClaude(inputCodePrompt));
+    const outputCodePrompt = buildOutputCodePrompt(
+      { inputFormat, outputFormat, solution },
+      fileList,
     );
+
+    const outputCodeRaw = await model.generateContent(outputCodePrompt);
     const outputGenCode = extractPython(outputCodeRaw.response.text());
+    // const outputGenCode = extractPython(await callClaude(outputCodePrompt));
 
     fs.writeFileSync(path.join(tempDir, "inputGenCode.py"), inputGenCode);
     fs.writeFileSync(path.join(tempDir, "outputGenCode.py"), outputGenCode);
@@ -359,8 +390,9 @@ Return ONLY Python code. No markdown fences.`;
       MetaData: metaData,
     };
 
+    const APP_CONFIG = require("../config/appConfig");
     try {
-      const response = await fetch("http://localhost:5000/CEPipeline", {
+      const response = await fetch(`${APP_CONFIG.CE_ENGINE_BASE}/CEPipeline`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -377,7 +409,8 @@ Return ONLY Python code. No markdown fences.`;
   downloadTestcases: async (req, res) => {
     const id = req.params.id;
     console.log("Sending Download req to CE engine");
-    const getFile = await axios(`http://localhost:5000/download/${id}`, {
+    const APP_CONFIG = require("../config/appConfig");
+    const getFile = await axios(`${APP_CONFIG.CE_ENGINE_BASE}/download/${id}`, {
       method: "GET",
       responseType: "stream",
     });
