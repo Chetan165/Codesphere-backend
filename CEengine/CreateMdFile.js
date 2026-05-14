@@ -3,7 +3,7 @@ import path from "path";
 const CreateMdFile = async (Job) => {
   let meta = JSON.parse(Job.MetaData);
   const mdContent = `
-# Problem Statement
+# ${meta.title || "Problem Statement"}
 ${meta.problemStatement}
 
 ## Input Format
@@ -24,7 +24,7 @@ ${meta.sampleInput}
 \`\`\`
 ${meta.sampleOutput}
 \`\`\`
-
+${meta.explanation ? `\n## Explanation\n${meta.explanation}\n` : ""}
 ## Solution
 \`\`\`python
 ${meta.solution}

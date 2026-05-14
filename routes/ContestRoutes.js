@@ -2,8 +2,45 @@ const express = require("express");
 const router = express.Router();
 const contestController = require("../controller/ContestController.js");
 const isloggedin = require("../middleware/SessionStatus.js");
+const checkContestWindow = require("../middleware/checkContestWindow.js");
+const { route } = require("../SubmissionRoute.js");
+const SubmitCode = require("../controller/submitController.js");
+const { PollSubmission, PollRun } = require("../controller/PollController.js");
+const runCode = require("../controller/RunController.js");
 
 router.get("/contests", contestController.getAllContests);
+router.get("/contests/:contestId/meta", contestController.getContestMeta);
+router.get(
+  "/contests/:contestId/challenges",
+  contestController.getContestChallengesList,
+);
+// check registration status
+router.get(
+  "/contests/:contestId/registered",
+  isloggedin,
+  contestController.checkRegistrationForContest,
+);
+router.get(
+  "/contests/:contestId/isRegistered",
+  isloggedin,
+  contestController.checkRegistrationForContest,
+);
+// register endpoint (alias with common misspelling kept for compatibility)
+router.post(
+  "/contests/resgister/:contestId",
+  isloggedin,
+  contestController.registerForContest,
+);
+router.post(
+  "/contests/register/:contestId",
+  isloggedin,
+  contestController.registerForContest,
+);
+router.get("/challenges/:challengeId", contestController.getChallengeById);
+router.post("/Submission/submit", checkContestWindow, SubmitCode);
+router.get("/Submission/submit/poll/:submissionId", PollSubmission);
+router.post("/Submission/run", checkContestWindow, runCode);
+router.get("/Submission/run/poll/:runId", PollRun);
 router.post("/problems", contestController.getProblems);
 router.post("/ContestChallenges", contestController.getContestChallenges);
 router.get("/deleteContest/:id", isloggedin, contestController.deleteContest);

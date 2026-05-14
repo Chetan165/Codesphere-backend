@@ -2,6 +2,7 @@ const passport = require("passport");
 const Prisma = require("./db/PrismaClient.js");
 const GoogleStrategy = require("passport-google-oauth2").Strategy;
 require("dotenv").config();
+const APP_CONFIG = require("./config/appConfig");
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
@@ -10,11 +11,11 @@ passport.use(
     {
       clientID: GOOGLE_CLIENT_ID,
       clientSecret: GOOGLE_CLIENT_SECRET,
-      callbackURL: "http://localhost:3000/google/callback",
+      callbackURL: `${APP_CONFIG.SERVER_BASE}/google/callback`,
       passReqToCallback: true,
     },
     async function (req, accessToken, refreshToken, profile, done) {
-      if (profile.email) {
+      if (profile.email && profile.email.endsWith("@tcetmumbai.in")) {
         // If the email is valid, proceed with the authentication
         console.log("Valid email:", profile.email);
         const user = await Prisma.User.findUnique({

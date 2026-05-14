@@ -8,14 +8,15 @@ const updatedSubmission = require("./UpdateSubmission.js");
 const ContestRoutes = require("./routes/ContestRoutes.js");
 const isloggedin = require("./middleware/SessionStatus.js");
 const AdminRoutes = require("./routes/AdminRoutes.js");
+const redis = require("./redis/redisClient.js");
 require("./auth");
-require("dotenv").config();
+const APP_CONFIG = require("./config/appConfig");
 
 const app = express();
 
 app.use(
   cors({
-    origin: ["http://localhost:5173", "http://13.201.179.0:2358"],
+    origin: APP_CONFIG.FRONTEND_ORIGINS,
     credentials: true, // allow cookies to be sent
   }),
 );
@@ -40,7 +41,6 @@ app.use("/", AuthRoutes);
 app.use("/admin", AdminRoutes);
 app.use("/api", ContestRoutes);
 app.use("/api/upload-testcases", TestcaseRouter);
-app.use("/api/Submission/", SubmissionRouter);
 app.post("/api/UpdateSubmission", async (req, res) => {
   const { uid, problemId, ContestId, score, verdict, Code, lang_id } = req.body;
   try {
@@ -59,6 +59,6 @@ app.post("/api/UpdateSubmission", async (req, res) => {
   }
 });
 
-app.listen(3000, () => {
-  console.log("Server is running on port 3000");
+app.listen(APP_CONFIG.PORT, () => {
+  console.log(`Server is running on port ${APP_CONFIG.PORT}`);
 });
