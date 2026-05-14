@@ -7,6 +7,9 @@ function buildInputCodePrompt(problem, reasoning, fileList, injection) {
     .join("\n");
 
   const largeCase = reasoning.testcases?.find((t) => t.type === "large");
+  const hasAdversarial = fileList.some(
+    (f) => f.type === "adversarial" || f.type === "wa",
+  );
 
   return `
 You are writing a Python testcase generator for a competitive programming problem.
@@ -17,6 +20,16 @@ ${problem.inputFormat}
 CONSTRAINTS:
 ${problem.constraints}
 
+${
+  hasAdversarial
+    ? `
+OPTIMAL SOLUTION REFERENCE:
+"""
+${problem.solution}
+"""
+`
+    : ""
+}
 GENERATION PLAN (follow this exactly):
 ${JSON.stringify(reasoning, null, 2)}
 
@@ -37,15 +50,16 @@ ${problem.sampleInput}
    Use the exact n values and constructions described.
    Do not substitute random data.
 
-5. For the large adversarial case:
+5. For the large adversarial case (TLE targeting):
    ${
      largeCase
        ? `
-   - Pattern: ${largeCase.adversarial_pattern}
+   - Anti-Early-Exit Pattern: ${largeCase.worst_case_payload_design?.anti_early_exit_pattern || "See plan"}
+   - Distribution: ${largeCase.worst_case_payload_design?.worst_case_distribution || "See plan"}
    - Helper function name: ${largeCase.helper_function_name}
    - You MUST write a function named ${largeCase.helper_function_name}(n)
    - N values to use: ${JSON.stringify(largeCase.n_values)}
-   - Sum must be ≤ ${largeCase.sum_n_limit}
+   - Sum must be exactly ${largeCase.sum_n}
    - HARD RULE: ${largeCase.helper_function_name}(n) must NOT call random
      as its primary data source. It must implement: ${largeCase.construction_algorithm}
    `
@@ -61,7 +75,24 @@ ${problem.sampleInput}
    # TARGETS: [what suboptimal algorithm this stresses]
    # SUM_N: [sum of all n values written]
 
-9. MANDATORY EXECUTION BLOCK (required):
+${
+  hasAdversarial
+    ? `
+9. ADVERSARIAL DIFFERENTIAL FUZZING (REQUIRED FOR 'adversarial' OR 'wa' FILES):
+   You are generating a Logic-Breaking "WA" testcase. Use a Differential Fuzzer.
+   A. Rewrite the Optimal Reference provided above into a callable function: optimal_ans(input_vars).
+   B. Write up to 3 common "Smart but Flawed" approaches (e.g., Greedy, Naive Recursion, Bad Prefix assumption) as functions: buggy_1(input_vars), buggy_2(...), etc.
+   C. Inside the generator function, use a loop to generate valid random inputs.
+   D. Evaluate optimal_ans() against your buggy functions.
+   E. If optimal_ans() != buggy_ans() for ANY of the buggy functions, write that input to the file and return.
+   F. CRITICAL TIMEOUT: You MUST use \`time.time()\`! Limit the search loop to 3.0 seconds. If no mismatch is found in 3 seconds, break the loop and write a fallback random input to avoid deadlocking the server.
+   G. Ensure you format the selected input into the correct multi-line string before writing to the file!
+   H. Import \`time\` at the top of the file.
+`
+    : ""
+}
+
+10. MANDATORY EXECUTION BLOCK (required):
    After all function definitions, append exactly this entrypoint pattern and call
    every generate_inputXX() function exactly once:
 

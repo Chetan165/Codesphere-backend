@@ -15,7 +15,7 @@ passport.use(
       passReqToCallback: true,
     },
     async function (req, accessToken, refreshToken, profile, done) {
-      if (profile.email) {
+      if (profile.email && profile.email.endsWith("@tcetmumbai.in")) {
         // If the email is valid, proceed with the authentication
         console.log("Valid email:", profile.email);
         const user = await Prisma.User.findUnique({

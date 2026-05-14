@@ -30,6 +30,7 @@ const JUDGE0_CONFIG = {
   languageOverrides: {
     54: {
       // C++ (GCC 9.2.0)
+      cpu_time_limit: 2, // C++ can be faster but allow some buffer for complex cases
       wall_time_limit: 8, // compile (~1-2s) + run (2s) + buffer
     },
     62: {

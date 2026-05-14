@@ -64,7 +64,17 @@ function extractJSON(text) {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start === -1 || end === -1) throw new Error("No JSON in response");
-  return JSON.parse(text.slice(start, end + 1));
+
+  const rawText = text.slice(start, end + 1);
+  try {
+    return JSON.parse(rawText);
+  } catch (err) {
+    // Escape unescaped backslashes commonly used in LaTeX math formatting
+    // Also explicitly fix \bullet since \b is technically a valid JSON escape (backspace) and wouldn't be caught by the lookahead
+    let cleanedText = rawText.replace(/\\bullet/g, "\\\\bullet");
+    cleanedText = cleanedText.replace(/\\(?!["\\/bfnrtu])/g, "\\\\");
+    return JSON.parse(cleanedText);
+  }
 }
 
 function extractPython(text) {
@@ -170,14 +180,23 @@ CONSTRAINT REQUIREMENTS:
 - Always state explicit constraints: ranges for T, N, and value limits
 - CRITICAL: sampleInput/Output must be absolutely valid and follow the stated formats and constraints
 
+FORMATTING REQUIREMENTS:
+- Use Markdown for structure (#, ##, **bold**, *italic*).
+- DO NOT use markdown bullet points (* or -) because our compiler does not support them! Instead, use $\\bullet$ for ALL bulleted lists.
+- Use LaTeX/KaTeX for math equations (e.g., $x_i \\le 10^9$).
+- CRITICAL: Since you return JSON, you MUST double-escape LaTeX backslashes (e.g., write $\\\\bullet$, $\\\\le$).
+- leave a line after writing the whole $\\\\bullet$ sentence as our markdown parser needs a blank line to render it properly. 
+
 Return ONLY a valid JSON object, no explanation, no markdown fences, starting with { and ending with }:
 {
+  "title": "Creative and clear problem title",
   "problemStatement": "...",
   "inputFormat": "...",
   "outputFormat": "...",
   "constraints": "...",
   "sampleInput": "...",
   "sampleOutput": "...",
+  "explanation": "Brief explanation of the sample testcases. Use $\\\\bullet$ for lists and LaTeX for math.",
   "inferredComplexity": "exact Big-O of your intended optimal solution e.g. O(n), O(n log n), O(n²)"
 }`;
 
@@ -216,7 +235,17 @@ Return ONLY Python code. No markdown fences.`;
 
       // Call 1 — Problem statement (Gemini JSON mode)
       const problemResult = await jsonModel.generateContent(problemPrompt);
-      const problemData = JSON.parse(problemResult.response.text());
+      const rawText = problemResult.response.text();
+      let problemData;
+      try {
+        problemData = JSON.parse(rawText);
+      } catch (err) {
+        // Fix bad escaped characters (like LaTeX \mathcal or \le) common in math algorithms
+        let cleanedText = rawText.replace(/\\bullet/g, "\\\\bullet");
+        cleanedText = cleanedText.replace(/\\(?!["\\/bfnrtu])/g, "\\\\");
+        problemData = JSON.parse(cleanedText);
+      }
+
       console.log(
         "[genAIProblem] Problem generated:",
         problemData.problemStatement?.slice(0, 80),
@@ -276,6 +305,7 @@ Return ONLY Python code. No markdown fences.`;
       sampleOutput,
       tags, // saved in Step 1
       expectedComplexity, // inferredComplexity saved as this in Step 1
+      difficulty, // saved in Step 1
     } = problemData;
 
     const knowledge = JSON.parse(
@@ -330,6 +360,7 @@ Return ONLY Python code. No markdown fences.`;
       tags,
       fileList,
       injection,
+      difficulty,
     );
     // const reasoningText = await callClaude(ReasoningPrompt);
     // const reasoning = extractJSON(reasoningText);
@@ -337,7 +368,7 @@ Return ONLY Python code. No markdown fences.`;
     const reasoning = extractJSON(reasoningRaw.response.text());
 
     const inputCodePrompt = buildInputCodePrompt(
-      { problemStatement, inputFormat, constraints, sampleInput },
+      { problemStatement, inputFormat, constraints, sampleInput, solution },
       reasoning,
       fileList,
       injection,
