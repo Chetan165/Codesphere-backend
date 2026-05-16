@@ -4,7 +4,7 @@ const contestController = require("../controller/ContestController.js");
 const isloggedin = require("../middleware/SessionStatus.js");
 const checkContestWindow = require("../middleware/checkContestWindow.js");
 const { route } = require("../SubmissionRoute.js");
-const SubmitCode = require("../controller/submitController.js");
+const SubmitCode = require("../controller/SubmitController.js");
 const { PollSubmission, PollRun } = require("../controller/PollController.js");
 const runCode = require("../controller/RunController.js");
 
