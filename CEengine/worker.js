@@ -85,11 +85,11 @@ while (true) {
       fs.writeFileSync(path.join(folderPath, "inputCode.py"), job.inputCode);
       console.log("[CE WORKER] Wrote inputCode.py for job:", Jobdata.jobid);
       try {
-        const resultInputGen = await runInDocker(
-          folderPath,
-          "inputCode.py",
-          {},
-        );
+        const resultInputGen = await runInDocker(folderPath, "inputCode.py", {
+          timeoutMs: 40000,
+          memoryLimit: "512m",
+          cpuLimit: "1.0",
+        });
         if (resultInputGen.exitCode !== 0 || resultInputGen.error) {
           throw new Error(
             `inputCode.py failed. Exit: ${resultInputGen.exitCode}. ` +
@@ -114,11 +114,20 @@ while (true) {
       fs.writeFileSync(path.join(folderPath, "outputCode.py"), job.outputCode);
       console.log("[CE WORKER] Wrote outputCode.py for job:", Jobdata.jobid);
       try {
-        const resultOutputGen = await runInDocker(
-          folderPath,
-          "outputCode.py",
-          {},
-        );
+        const resultOutputGen = await runInDocker(folderPath, "outputCode.py", {
+          timeoutMs: 30000, // 30 seconds to process all outputs
+          memoryLimit: "512m", // Protect server from memory exhaustion
+          cpuLimit: "1.0", // Keep CPU usage contained
+        });
+
+        if (resultOutputGen.exitCode !== 0 || resultOutputGen.error) {
+          throw new Error(
+            `outputCode.py failed. Exit: ${resultOutputGen.exitCode}. ` +
+              `Stderr: ${resultOutputGen.stderr}. ` +
+              `Error: ${resultOutputGen.error}`,
+          );
+        }
+
         console.log(
           "[CE WORKER] Docker execution completed for outputCode.py for job:",
           Jobdata.jobid,

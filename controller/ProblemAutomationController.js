@@ -118,7 +118,7 @@ module.exports = {
   // prob generation using LLM
 
   genAIProblem: async (req, res) => {
-    const { tags, difficulty, questionStyle } = req.body;
+    const { tags, difficulty, questionStyle, additionalContext } = req.body;
     const expectedComplexity = req.body.expectedComplexity || null;
 
     const sessionId = uuidv4();
@@ -126,7 +126,11 @@ module.exports = {
     fs.mkdirSync(tempDir, { recursive: true });
     fs.writeFileSync(
       path.join(tempDir, "input.json"),
-      JSON.stringify({ tags, difficulty, expectedComplexity }, null, 2),
+      JSON.stringify(
+        { tags, difficulty, expectedComplexity, additionalContext },
+        null,
+        2,
+      ),
     );
 
     const knowledge = require("../metadata/adversarial_patterns.json");
@@ -138,30 +142,33 @@ module.exports = {
     const problemPrompt = `
 You are an expert competitive programming problem setter.
 
-Generate a ${difficulty} problem in ${questionStyle || "General"} style.
-Tags: ${tags.join(", ")}
+${additionalContext ? `User Context(use this info to build the problem): ${additionalContext}\n\n` : ""}
 
+STRICT RESKINNING DIRECTIVE:
+CRITICAL: DO NOT INVENT NOVEL ALGORITHMIC LOGIC OR MATH FROM SCRATCH. 
+You must select a well-known, mathematically verified problem from LeetCode, Codeforces, or CSES based on the tags: ${tags.join(", ")}.
+Your task is to RE-SKIN this problem. Keep the exact underlying mathematical logic, constraints, edge cases, and optimal solution structure of the original problem.
+Only change the "flavor text" (the story context, character names, object names) to make the presentation original (Style: ${questionStyle || "General"}). 
+Ensuring absolute algorithmic correctness and avoiding ambiguity is your highest priority.
+
+Difficulty: ${difficulty}
 ${
   expectedComplexity
     ? `COMPLEXITY: The solution must be ${expectedComplexity}.`
-    : `COMPLEXITY: Choose the most appropriate complexity for this specific problem.
-       It does not have to follow a fixed rule — a 1D DP can be O(n), a 2D DP O(n²), etc.
-       Base it on what the problem actually requires.`
+    : `COMPLEXITY: Choose the exact complexity of the original verified problem you are re-skinning.`
 }
 
 ${
   tagKnowledge
     ? `
 REFERENCE KNOWLEDGE FOR THIS PROBLEM TYPE (${primaryTag}):
-CRITICAL: dont use this as it is, decide the appropriate subcategory of the problem from this, use suboptimal algorithms and pitfalls as they are along with recommendations for T, n, sum_n etc for each testcase type.
+CRITICAL: Use this to decide the appropriate subcategory of the problem. Use suboptimal algorithms and pitfalls as they are along with recommendations for T, n, sum_n etc.
 
 Common suboptimal approaches students will submit:
 ${tagKnowledge.suboptimal_algorithms?.map((a) => `- ${a.name}: ${a.complexity} — ${a.how_common}`).join("\n")}
 
 Constraint budget reference:
 ${JSON.stringify(tagKnowledge.constraint_budget, null, 2)}
-
-Known pitfall for this topic: ${tagKnowledge.pitfall || "See suboptimal algorithms above"}
 `
     : ""
 }
@@ -171,23 +178,21 @@ CONSTRAINT REQUIREMENTS:
 - Calibrate T and N so that:
   ${
     difficulty === "Easy"
-      ? "Constraints are relaxed. A simple brute force O(n²) may pass if the problem is straightforward. Use smaller N."
+      ? "Constraints are relaxed. A simple brute force O(n²) may pass."
       : difficulty === "Hard"
         ? "Constraints are tight. Only the optimal solution passes. Brute force must TLE by a large margin."
         : "Moderate. The optimal solution passes comfortably. A naive O(n²) should TLE for large inputs."
   }
-- The sum of all N across all T testcases in one file must be bounded
-- Always state explicit constraints: ranges for T, N, and value limits
-- CRITICAL: sampleInput/Output must be absolutely valid and follow the stated formats and constraints
+- Always state explicit constraints: ranges for T, N, and value limits. 
 
 FORMATTING REQUIREMENTS:
 - Use Markdown for structure (#, ##, **bold**, *italic*).
 - DO NOT use markdown bullet points (* or -) because our compiler does not support them! Instead, use $\\bullet$ for ALL bulleted lists.
 - Use LaTeX/KaTeX for math equations (e.g., $x_i \\le 10^9$).
 - CRITICAL: Since you return JSON, you MUST double-escape LaTeX backslashes (e.g., write $\\\\bullet$, $\\\\le$).
-- leave a line after writing the whole $\\\\bullet$ sentence as our markdown parser needs a blank line to render it properly. 
+- Leave a blank line after writing a $\\\\bullet$ sentence so the markdown parser renders it properly.
 
-Return ONLY a valid JSON object, no explanation, no markdown fences, starting with { and ending with }:
+Return ONLY a valid JSON object, no explanation, no markdown fences:
 {
   "title": "Creative and clear problem title",
   "problemStatement": "...",
@@ -196,8 +201,8 @@ Return ONLY a valid JSON object, no explanation, no markdown fences, starting wi
   "constraints": "...",
   "sampleInput": "...",
   "sampleOutput": "...",
-  "explanation": "Brief explanation of the sample testcases. Use $\\\\bullet$ for lists and LaTeX for math.",
-  "inferredComplexity": "exact Big-O of your intended optimal solution e.g. O(n), O(n log n), O(n²)"
+  "explanation": "Brief explanation. Use $\\\\bullet$ for lists and LaTeX for math.",
+  "inferredComplexity": "exact Big-O of the original optimal solution e.g. O(n log n)"
 }`;
 
     const buildSolutionPrompt = (problemData) => `
@@ -287,7 +292,7 @@ Return ONLY Python code. No markdown fences.`;
 
   // generate Code for testcase generation
   genAITestcases: async (req, res) => {
-    const { sessionId, testcaseTypes } = req.body;
+    const { sessionId } = req.body; // Ignored testcaseTypes from request
 
     const tempDir = path.join(__dirname, "../uploads", sessionId);
     const genaiPath = path.join(tempDir, "genai_response.json");
@@ -303,9 +308,9 @@ Return ONLY Python code. No markdown fences.`;
       solution,
       sampleInput,
       sampleOutput,
-      tags, // saved in Step 1
-      expectedComplexity, // inferredComplexity saved as this in Step 1
-      difficulty, // saved in Step 1
+      tags,
+      expectedComplexity,
+      difficulty,
     } = problemData;
 
     const knowledge = JSON.parse(
@@ -332,14 +337,16 @@ Return ONLY Python code. No markdown fences.`;
       suboptimal_algorithms: entry?.suboptimal_algorithms,
       constraints: constraintBudget, // reference — LLM adapts
       patterns: {
-        large: testcaseTypes.includes("large")
-          ? entry?.large_adversarial
-          : undefined,
-        edge: testcaseTypes.includes("edge") ? entry?.edge_cases : undefined,
+        // Unconditionally pass these since the 6-file topology always needs them
+        large: entry?.large_adversarial,
+        edge: entry?.edge_cases,
       },
     };
 
-    const fileList = testcaseTypes.map((type, i) => ({
+    // HARDCODED 5-FILE TOPOLOGY
+    const fixedTopology = ["sample", "edge", "generic", "large", "adversarial"];
+
+    const fileList = fixedTopology.map((type, i) => ({
       index: String(i).padStart(2, "0"),
       type: type,
       filename: `input/input${String(i).padStart(2, "0")}.txt`,

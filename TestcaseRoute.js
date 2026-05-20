@@ -14,6 +14,12 @@ router.post("/", upload.single("zip"), async (req, res) => {
     const zipPath = req.file.path;
     const zip = new Admzip(zipPath);
     const zipEntries = zip.getEntries();
+    if (!id || id == "") {
+      return res.status(400).json({
+        message: "Missing problemId in request body.",
+        ok: false,
+      });
+    }
 
     // Sort filenames: input00.txt before output00.txt
     const inputs = zipEntries.filter((e) => /input\d+\.txt$/.test(e.entryName));
