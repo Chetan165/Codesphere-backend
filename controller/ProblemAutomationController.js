@@ -521,6 +521,10 @@ Return ONLY Python code. No markdown fences.`;
       gemini.getGenerativeModel({
         model: "gemini-3.5-flash",
       });
+    const flashText3_0 = () =>
+      gemini.getGenerativeModel({
+        model: "gemini-3-flash-preview",
+      });
 
     try {
       // ── STAGE 1: Approach Mining ─────────────────────────────────────────
@@ -625,7 +629,8 @@ Return ONLY Python code. No markdown fences.`;
       );
 
       const inputCodeRaw = await flashText().generateContent(inputCodePrompt);
-      const outputCodeRaw = await flashText().generateContent(outputCodePrompt);
+      const outputCodeRaw =
+        await flashText3_0().generateContent(outputCodePrompt);
 
       const inputGenCode = extractPython(inputCodeRaw.response.text());
       const outputGenCode = extractPython(outputCodeRaw.response.text());

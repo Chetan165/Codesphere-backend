@@ -1,6 +1,7 @@
 const express = require("express");
 const passport = require("passport");
 const session = require("express-session");
+const { RedisStore } = require("connect-redis");
 const cors = require("cors");
 const TestcaseRouter = require("./TestcaseRoute.js");
 const SubmissionRouter = require("./SubmissionRoute.js");
@@ -11,6 +12,14 @@ const AdminRoutes = require("./routes/AdminRoutes.js");
 const redis = require("./redis/redisClient.js");
 require("./auth");
 const APP_CONFIG = require("./config/appConfig");
+
+const SESSION_MAX_AGE_MS = 1000 * 60 * 60 * 24;
+const SESSION_TTL_SECONDS = 60 * 60 * 24;
+const redisSessionStore = new RedisStore({
+  client: redis,
+  prefix: "sess:",
+  ttl: SESSION_TTL_SECONDS,
+});
 
 const app = express();
 
@@ -25,8 +34,13 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(
   session({
+    store: redisSessionStore,
+    resave: false,
+    saveUninitialized: false,
     secret: process.env.secret,
+    rolling: false,
     cookie: {
+      maxAge: SESSION_MAX_AGE_MS,
       secure: false, // only true if using HTTPS
       sameSite: "lax", // or 'none' with secure: true
     },

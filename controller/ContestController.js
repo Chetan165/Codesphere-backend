@@ -111,6 +111,9 @@ const getContestChallenges = async (req, res) => {
 const deleteContest = async (req, res) => {
   const id = req.params.id;
   try {
+    const deleteSubmissions = await Prisma.submission.deleteMany({
+      where: { contestId: id },
+    });
     const contest = await Prisma.Contest.findUnique({ where: { id } });
     const date_now = new Date();
     if (contest.startTime < date_now) {
