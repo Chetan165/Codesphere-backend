@@ -25,6 +25,7 @@
     "express": "^5.1.0",
     "express-session": "^1.19.0",
     "ioredis": "^5.10.1",
+    "jsonrepair": "^3.14.0",
     "multer": "^2.0.1",
     "passport": "^0.7.0",
     "passport-google-oauth2": "^0.2.0",

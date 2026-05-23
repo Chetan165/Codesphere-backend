@@ -3,43 +3,29 @@ dotenv.config();
 const path = require("path");
 const { spawn } = require("child_process");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { jsonrepair } = require("jsonrepair");
 const axios = require("axios");
 const fs = require("fs");
-const { diff } = require("util");
 const { v4: uuidv4 } = require("uuid");
 const apiKey = process.env.GEMINI_API_KEY;
-const buildReasoningPrompt = require("../LLMPromptBuilder/buildReasoningPrompt.js");
+
+// New multi-stage prompt builders
+const buildApproachMiningPrompt = require("../LLMPromptBuilder/buildApproachMiningPrompt.js");
+const {
+  buildEdgeReasoningPrompt,
+  buildLargeReasoningPrompt,
+  buildGenericReasoningPrompt,
+  buildAdversarialReasoningPrompt,
+  buildSampleEntry,
+} = require("../LLMPromptBuilder/buildFocusedReasoningPrompts.js");
+
+// Existing prompt builders (unchanged)
 const buildInputCodePrompt = require("../LLMPromptBuilder/buildInputCodePrompt.js");
 const buildOutputCodePrompt = require("../LLMPromptBuilder/buildOutputCodePrompt.js");
 const buildSolutionGuidance = require("../metadata/buildSolutionGuidance.js");
+
 const Anthropic = require("@anthropic-ai/sdk");
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-// function buildKnowledgeInjection(tags, complexity, selectedTypes, knowledge) {
-//   if (!tags || tags.length === 0) return { matched: false };
-
-//   // Try each tag against knowledge keys
-//   for (const tag of tags) {
-//     const normalized = tag.charAt(0).toUpperCase() + tag.slice(1).toLowerCase();
-//     const entry = knowledge[normalized];
-//     if (!entry) continue;
-
-//     return {
-//       matched: true,
-//       tag: normalized,
-//       suboptimal_algorithms: entry.suboptimal_algorithms,
-//       constraints: entry.constraint_budget?.[complexity] || null,
-//       patterns: {
-//         large: selectedTypes.includes("large")
-//           ? entry.large_adversarial
-//           : undefined,
-//         edge: selectedTypes.includes("edge") ? entry.edge_cases : undefined,
-//       },
-//     };
-//   }
-
-//   return { matched: false };
-// }
 
 async function callClaude(prompt, useThinking = true) {
   const config = {
@@ -47,14 +33,9 @@ async function callClaude(prompt, useThinking = true) {
     max_tokens: 16000,
     messages: [{ role: "user", content: prompt }],
   };
-
   if (useThinking) {
-    config.thinking = {
-      type: "enabled",
-      budget_tokens: 10000,
-    };
+    config.thinking = { type: "enabled", budget_tokens: 10000 };
   }
-
   const response = await anthropic.messages.create(config);
   const textBlock = response.content.find((b) => b.type === "text");
   return textBlock?.text || "";
@@ -64,13 +45,10 @@ function extractJSON(text) {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start === -1 || end === -1) throw new Error("No JSON in response");
-
   const rawText = text.slice(start, end + 1);
   try {
     return JSON.parse(rawText);
   } catch (err) {
-    // Escape unescaped backslashes commonly used in LaTeX math formatting
-    // Also explicitly fix \bullet since \b is technically a valid JSON escape (backspace) and wouldn't be caught by the lookahead
     let cleanedText = rawText.replace(/\\bullet/g, "\\\\bullet");
     cleanedText = cleanedText.replace(/\\(?!["\\/bfnrtu])/g, "\\\\");
     return JSON.parse(cleanedText);
@@ -78,12 +56,144 @@ function extractJSON(text) {
 }
 
 function extractPython(text) {
-  // Strip markdown fences if present
   const fenceMatch = text.match(/```python\n([\s\S]*?)```/);
   if (fenceMatch) return fenceMatch[1].trim();
   const genericFence = text.match(/```\n([\s\S]*?)```/);
   if (genericFence) return genericFence[1].trim();
   return text.trim();
+}
+
+function extractJsonPayload(text) {
+  const firstBrace = text.indexOf("{");
+  const lastBrace = text.lastIndexOf("}");
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace < firstBrace) {
+    throw new Error("No JSON object found in response");
+  }
+  return text.slice(firstBrace, lastBrace + 1);
+}
+
+function repairJsonEscapes(text) {
+  let repaired = "";
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+
+    if (!inString) {
+      repaired += char;
+      if (char === '"') inString = true;
+      continue;
+    }
+
+    if (escaped) {
+      repaired += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === "\\") {
+      const nextChar = text[i + 1];
+      if (nextChar && !'"\\/bfnrtu'.includes(nextChar)) {
+        repaired += "\\\\";
+      } else {
+        repaired += char;
+      }
+      escaped = nextChar && '"\\/bfnrtu'.includes(nextChar);
+      continue;
+    }
+
+    if (char === "\n") {
+      repaired += "\\n";
+      continue;
+    }
+
+    if (char === "\r") {
+      repaired += "\\r";
+      continue;
+    }
+
+    if (char === "\t") {
+      repaired += "\\t";
+      continue;
+    }
+
+    repaired += char;
+    if (char === '"') inString = false;
+  }
+
+  return repaired;
+}
+
+function extractJsonStringField(text, key) {
+  const pattern = new RegExp(`"${key}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`, "s");
+  const match = text.match(pattern);
+  if (!match) return null;
+
+  const rawValue = match[1]
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, "\\")
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\r")
+    .replace(/\\t/g, "\t");
+
+  return rawValue;
+}
+
+function safeParseProblemJSON(text) {
+  const payload = extractJsonPayload(text);
+  const repaired = repairJsonEscapes(payload);
+
+  try {
+    return JSON.parse(jsonrepair(repaired));
+  } catch (error) {
+    const fallback = {
+      title: extractJsonStringField(payload, "title") || "Untitled Problem",
+      problemStatement:
+        extractJsonStringField(payload, "problemStatement") || "",
+      inputFormat: extractJsonStringField(payload, "inputFormat") || "",
+      outputFormat: extractJsonStringField(payload, "outputFormat") || "",
+      constraints: extractJsonStringField(payload, "constraints") || "",
+      sampleInput: extractJsonStringField(payload, "sampleInput") || "",
+      sampleOutput: extractJsonStringField(payload, "sampleOutput") || "",
+      explanation: extractJsonStringField(payload, "explanation") || "",
+      inferredComplexity:
+        extractJsonStringField(payload, "inferredComplexity") ||
+        (text.includes("O(n^2)") ? "O(n^2)" : "unknown"),
+    };
+
+    if (!fallback.problemStatement && !fallback.inputFormat) {
+      throw error;
+    }
+
+    return fallback;
+  }
+}
+
+// Safe JSON parse with JSON-string escape repair
+function safeParseJSON(text) {
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    const payload = extractJsonPayload(text);
+    const repairAttempts = [
+      payload,
+      repairJsonEscapes(payload),
+      jsonrepair(payload),
+      jsonrepair(repairJsonEscapes(payload)),
+    ];
+
+    let lastError = e;
+    for (const attempt of repairAttempts) {
+      try {
+        return JSON.parse(attempt);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError;
+  }
 }
 
 const tagPriority = [
@@ -114,9 +224,101 @@ const tagPriority = [
   "Array",
 ];
 
-module.exports = {
-  // prob generation using LLM
+// Fixed 5-file topology — always the same, no user selection
+const FIXED_TOPOLOGY = ["sample", "edge", "generic", "large", "adversarial"];
 
+// ─────────────────────────────────────────────────────────────────────────────
+// mergeReasoningResults
+// Combines four focused reasoning JSONs into one object matching
+// the schema that buildInputCodePrompt expects
+// ─────────────────────────────────────────────────────────────────────────────
+function mergeReasoningResults(reasoningByType, fileList, approaches) {
+  const testcases = [];
+
+  // Sample — no LLM needed
+  const sampleFiles = fileList.filter((f) => f.type === "sample");
+  for (const f of sampleFiles) {
+    testcases.push({
+      file: f.filename,
+      type: "sample",
+      purpose: "Verify basic functionality against provided sample",
+      instruction: "use exact sample provided",
+    });
+  }
+
+  // Edge
+  const edgeResult = reasoningByType.edge;
+  if (edgeResult?.files) {
+    for (const file of edgeResult.files) testcases.push(file);
+  } else if (edgeResult?.cases) {
+    // flat structure fallback
+    const edgeFile = fileList.find((f) => f.type === "edge");
+    if (edgeFile)
+      testcases.push({ ...edgeResult, file: edgeFile.filename, type: "edge" });
+  }
+
+  // Generic
+  const genericResult = reasoningByType.generic;
+  if (genericResult?.files) {
+    for (const file of genericResult.files) testcases.push(file);
+  } else if (genericResult) {
+    const genericFile = fileList.find((f) => f.type === "generic");
+    if (genericFile)
+      testcases.push({
+        ...genericResult,
+        file: genericFile.filename,
+        type: "generic",
+      });
+  }
+
+  // Large
+  const largeResult = reasoningByType.large;
+  if (largeResult?.files) {
+    for (const file of largeResult.files) testcases.push(file);
+  } else if (largeResult) {
+    const largeFile = fileList.find((f) => f.type === "large");
+    if (largeFile)
+      testcases.push({
+        ...largeResult,
+        file: largeFile.filename,
+        type: "large",
+      });
+  }
+
+  // Adversarial
+  const advResult = reasoningByType.adversarial;
+  if (advResult?.files) {
+    for (const file of advResult.files) testcases.push(file);
+  } else if (advResult) {
+    const advFile = fileList.find((f) => f.type === "adversarial");
+    if (advFile)
+      testcases.push({
+        ...advResult,
+        file: advFile.filename,
+        type: "adversarial",
+      });
+  }
+
+  return {
+    problem_analysis: {
+      broad_tag: approaches.correct_algorithm?.name || "unknown",
+      exact_optimal_complexity:
+        approaches.correct_algorithm?.complexity || "unknown",
+      max_allowed_sum_of_n_over_T:
+        largeResult?.max_allowed_sum_of_n ||
+        largeResult?.files?.[0]?.sum_n ||
+        200000,
+      identified_common_pitfalls:
+        approaches.wrong_approaches?.slice(0, 3).map((a) => a.name) || [],
+    },
+    testcases,
+  };
+}
+
+module.exports = {
+  // ─────────────────────────────────────────────────────────────────────────
+  // genAIProblem — unchanged from original
+  // ─────────────────────────────────────────────────────────────────────────
   genAIProblem: async (req, res) => {
     const { tags, difficulty, questionStyle, additionalContext } = req.body;
     const expectedComplexity = req.body.expectedComplexity || null;
@@ -162,11 +364,8 @@ ${
   tagKnowledge
     ? `
 REFERENCE KNOWLEDGE FOR THIS PROBLEM TYPE (${primaryTag}):
-CRITICAL: Use this to decide the appropriate subcategory of the problem. Use suboptimal algorithms and pitfalls as they are along with recommendations for T, n, sum_n etc.
-
 Common suboptimal approaches students will submit:
 ${tagKnowledge.suboptimal_algorithms?.map((a) => `- ${a.name}: ${a.complexity} — ${a.how_common}`).join("\n")}
-
 Constraint budget reference:
 ${JSON.stringify(tagKnowledge.constraint_budget, null, 2)}
 `
@@ -178,31 +377,30 @@ CONSTRAINT REQUIREMENTS:
 - Calibrate T and N so that:
   ${
     difficulty === "Easy"
-      ? "Constraints are relaxed. A simple brute force O(n²) may pass."
+      ? "Constraints can be relaxed(depends on question). A simple brute force O(n²) may pass."
       : difficulty === "Hard"
-        ? "Constraints are tight. Only the optimal solution passes. Brute force must TLE by a large margin."
-        : "Moderate. The optimal solution passes comfortably. A naive O(n²) should TLE for large inputs."
+        ? "Constraints are tight. Only the optimal solution passes."
+        : "Moderate. The optimal solution passes. A naive O(n²) should TLE."
   }
-- Always state explicit constraints: ranges for T, N, and value limits. 
+- Always state explicit constraints: ranges for T, N, and value limits.
 
 FORMATTING REQUIREMENTS:
-- Use Markdown for structure (#, ##, **bold**, *italic*).
-- DO NOT use markdown bullet points (* or -) because our compiler does not support them! Instead, use $\\bullet$ for ALL bulleted lists.
-- Use LaTeX/KaTeX for math equations (e.g., $x_i \\le 10^9$).
-- CRITICAL: Since you return JSON, you MUST double-escape LaTeX backslashes (e.g., write $\\\\bullet$, $\\\\le$).
-- Leave a blank line after writing a $\\\\bullet$ sentence so the markdown parser renders it properly.
+- Use Markdown for structure. DO NOT use * or - bullets — use $\\\\bullet$ instead.
+- Use LaTeX for math. Double-escape backslashes in JSON (e.g. $\\\\le$).
+- IMPORTANT: Leave a blank line after each $\\\\bullet$ sentence.
+- use -> for plain ASCII arrow if needed for explanation or wherever dont use simple arrow it doesnt render.
 
-Return ONLY a valid JSON object, no explanation, no markdown fences:
+Return ONLY valid JSON:
 {
-  "title": "Creative and clear problem title",
-  "problemStatement": "...",
-  "inputFormat": "...",
-  "outputFormat": "...",
-  "constraints": "...",
-  "sampleInput": "...",
-  "sampleOutput": "...",
-  "explanation": "Brief explanation. Use $\\\\bullet$ for lists and LaTeX for math.",
-  "inferredComplexity": "exact Big-O of the original optimal solution e.g. O(n log n)"
+  "title": "string",
+  "problemStatement": "string",
+  "inputFormat": "string",
+  "outputFormat": "string",
+  "constraints": "string",
+  "sampleInput": "string",
+  "sampleOutput": "string",
+  "explanation": "string",
+  "inferredComplexity": "string"
 }`;
 
     const buildSolutionPrompt = (problemData) => `
@@ -238,29 +436,15 @@ Return ONLY Python code. No markdown fences.`;
         model: "gemini-3-flash-preview",
       });
 
-      // Call 1 — Problem statement (Gemini JSON mode)
       const problemResult = await jsonModel.generateContent(problemPrompt);
-      const rawText = problemResult.response.text();
-      let problemData;
-      try {
-        problemData = JSON.parse(rawText);
-      } catch (err) {
-        // Fix bad escaped characters (like LaTeX \mathcal or \le) common in math algorithms
-        let cleanedText = rawText.replace(/\\bullet/g, "\\\\bullet");
-        cleanedText = cleanedText.replace(/\\(?!["\\/bfnrtu])/g, "\\\\");
-        problemData = JSON.parse(cleanedText);
-      }
+      const problemData = safeParseProblemJSON(problemResult.response.text());
 
       console.log(
-        "[genAIProblem] Problem generated:",
+        "[genAIProblem] Problem:",
         problemData.problemStatement?.slice(0, 80),
       );
-      console.log(
-        "[genAIProblem] Inferred complexity:",
-        problemData.inferredComplexity,
-      );
+      console.log("[genAIProblem] Complexity:", problemData.inferredComplexity);
 
-      // Call 2 — Solution (Gemini text mode)
       const solutionResult = await textModel.generateContent(
         buildSolutionPrompt(problemData),
       );
@@ -290,9 +474,12 @@ Return ONLY Python code. No markdown fences.`;
     }
   },
 
-  // generate Code for testcase generation
+  // ─────────────────────────────────────────────────────────────────────────
+  // genAITestcases — new multi-stage pipeline
+  // Fixed 5-file topology: sample, edge, generic, large, adversarial
+  // ─────────────────────────────────────────────────────────────────────────
   genAITestcases: async (req, res) => {
-    const { sessionId } = req.body; // Ignored testcaseTypes from request
+    const { sessionId } = req.body;
 
     const tempDir = path.join(__dirname, "../uploads", sessionId);
     const genaiPath = path.join(tempDir, "genai_response.json");
@@ -300,112 +487,164 @@ Return ONLY Python code. No markdown fences.`;
       return res.status(400).json({ ok: false, error: "Session not found" });
 
     const problemData = JSON.parse(fs.readFileSync(genaiPath, "utf-8"));
-    const {
-      problemStatement,
-      inputFormat,
-      outputFormat,
-      constraints,
-      solution,
-      sampleInput,
-      sampleOutput,
-      tags,
-      expectedComplexity,
-      difficulty,
-    } = problemData;
+    const { tags, expectedComplexity, difficulty } = problemData;
 
-    const knowledge = JSON.parse(
-      fs.readFileSync(
-        path.join(__dirname, "../metadata/adversarial_patterns.json"),
-        "utf-8",
-      ),
-    );
-
-    const primaryTag =
-      tagPriority.find((t) => tags.includes(t) && knowledge[t]) ??
-      tags.find((t) => knowledge[t]);
-    const entry = primaryTag ? knowledge[primaryTag] : null;
-
-    // Exact budget if complexity matches, otherwise first available as reference
-    const constraintBudget = entry?.constraint_budget
-      ? (entry.constraint_budget[expectedComplexity] ??
-        Object.values(entry.constraint_budget)[0])
-      : null;
-
-    const injection = {
-      matched: !!entry,
-      tag: primaryTag,
-      suboptimal_algorithms: entry?.suboptimal_algorithms,
-      constraints: constraintBudget, // reference — LLM adapts
-      patterns: {
-        // Unconditionally pass these since the 6-file topology always needs them
-        large: entry?.large_adversarial,
-        edge: entry?.edge_cases,
-      },
-    };
-
-    // HARDCODED 5-FILE TOPOLOGY
-    const fixedTopology = ["sample", "edge", "generic", "large", "adversarial"];
-
-    const fileList = fixedTopology.map((type, i) => ({
+    // Fixed topology — always these 5 files in this order
+    const fileList = FIXED_TOPOLOGY.map((type, i) => ({
       index: String(i).padStart(2, "0"),
-      type: type,
+      type,
       filename: `input/input${String(i).padStart(2, "0")}.txt`,
     }));
 
-    const genai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genai.getGenerativeModel({ model: "gemini-3-flash-preview" });
-    const ReasoningPrompt = buildReasoningPrompt(
-      {
-        problemStatement,
-        inputFormat,
-        outputFormat,
-        constraints,
-        sampleInput,
-        sampleOutput,
-      },
-      expectedComplexity,
-      tags,
-      fileList,
-      injection,
-      difficulty,
-    );
-    // const reasoningText = await callClaude(ReasoningPrompt);
-    // const reasoning = extractJSON(reasoningText);
-    const reasoningRaw = await model.generateContent(ReasoningPrompt);
-    const reasoning = extractJSON(reasoningRaw.response.text());
+    const filesByType = {
+      sample: fileList.filter((f) => f.type === "sample"),
+      edge: fileList.filter((f) => f.type === "edge"),
+      generic: fileList.filter((f) => f.type === "generic"),
+      large: fileList.filter((f) => f.type === "large"),
+      adversarial: fileList.filter((f) => f.type === "adversarial"),
+    };
 
-    const inputCodePrompt = buildInputCodePrompt(
-      { problemStatement, inputFormat, constraints, sampleInput, solution },
-      reasoning,
-      fileList,
-      injection,
-    );
-    const inputCodeRaw = await model.generateContent(inputCodePrompt);
-    const inputGenCode = extractPython(inputCodeRaw.response.text());
-    // const inputGenCode = extractPython(await callClaude(inputCodePrompt));
-    const outputCodePrompt = buildOutputCodePrompt(
-      { inputFormat, outputFormat, solution },
-      fileList,
-    );
+    const gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-    const outputCodeRaw = await model.generateContent(outputCodePrompt);
-    const outputGenCode = extractPython(outputCodeRaw.response.text());
-    // const outputGenCode = extractPython(await callClaude(outputCodePrompt));
+    // Model factory helpers
+    const flashLiteJSON = () =>
+      gemini.getGenerativeModel({
+        model: "gemini-3.1-flash-lite",
+        generationConfig: { responseMimeType: "application/json" },
+      });
+    const flashJSON = () =>
+      gemini.getGenerativeModel({
+        model: "gemini-3.5-flash",
+        generationConfig: { responseMimeType: "application/json" },
+      });
+    const flashText = () =>
+      gemini.getGenerativeModel({
+        model: "gemini-3.5-flash",
+      });
 
-    fs.writeFileSync(path.join(tempDir, "inputGenCode.py"), inputGenCode);
-    fs.writeFileSync(path.join(tempDir, "outputGenCode.py"), outputGenCode);
-    fs.writeFileSync(
-      path.join(tempDir, "reasoning.json"),
-      JSON.stringify(reasoning, null, 2),
-    );
+    try {
+      // ── STAGE 1: Approach Mining ─────────────────────────────────────────
+      // One call dedicated to enumerating every wrong approach and killing structure
+      // Flash Lite — pure reasoning, cheap, runs fast
+      console.log("[genAITestcases] Stage 1: approach mining...");
+      const miningRaw = await flashJSON().generateContent(
+        buildApproachMiningPrompt(problemData),
+      );
+      const approaches = safeParseJSON(miningRaw.response.text());
+      fs.writeFileSync(
+        path.join(tempDir, "approaches.json"),
+        JSON.stringify(approaches, null, 2),
+      );
+      console.log(
+        `[genAITestcases] Mined ${approaches.wrong_approaches?.length || 0} wrong approaches`,
+      );
 
-    return res.json({ ok: true, sessionId, reasoning });
+      // ── STAGE 2: Parallel Focused Reasoning ──────────────────────────────
+      // Four concurrent calls, each focused on exactly one file type
+      // Flash Lite for edge/generic/large, full Flash for adversarial
+      console.log("[genAITestcases] Stage 2: parallel focused reasoning...");
+
+      const [edgeRaw, genericRaw, largeRaw, adversarialRaw] = await Promise.all(
+        [
+          flashLiteJSON().generateContent(
+            buildEdgeReasoningPrompt(
+              problemData,
+              expectedComplexity,
+              approaches,
+              filesByType.edge,
+              difficulty,
+            ),
+          ),
+          flashLiteJSON().generateContent(
+            buildGenericReasoningPrompt(
+              problemData,
+              expectedComplexity,
+              approaches,
+              filesByType.generic,
+              difficulty,
+            ),
+          ),
+          flashLiteJSON().generateContent(
+            buildLargeReasoningPrompt(
+              problemData,
+              expectedComplexity,
+              approaches,
+              filesByType.large,
+              difficulty,
+            ),
+          ),
+          flashJSON().generateContent(
+            buildAdversarialReasoningPrompt(
+              problemData,
+              expectedComplexity,
+              approaches,
+              filesByType.adversarial,
+              difficulty,
+            ),
+          ),
+        ],
+      );
+
+      const reasoningByType = {
+        edge: safeParseJSON(edgeRaw.response.text()),
+        generic: safeParseJSON(genericRaw.response.text()),
+        large: safeParseJSON(largeRaw.response.text()),
+        adversarial: safeParseJSON(adversarialRaw.response.text()),
+      };
+
+      // Merge into single reasoning object for buildInputCodePrompt
+      const reasoning = mergeReasoningResults(
+        reasoningByType,
+        fileList,
+        approaches,
+      );
+      fs.writeFileSync(
+        path.join(tempDir, "reasoning.json"),
+        JSON.stringify(reasoning, null, 2),
+      );
+      console.log("[genAITestcases] Stage 2 complete");
+
+      // ── STAGE 3: Code Generation ──────────────────────────────────────────
+      // Input and output code generated in parallel
+      // Full Flash — code quality matters
+      console.log("[genAITestcases] Stage 3: code generation...");
+
+      const inputCodePrompt = buildInputCodePrompt(
+        { ...problemData, approaches },
+        reasoning,
+        fileList,
+        {},
+      );
+      const outputCodePrompt = buildOutputCodePrompt(
+        {
+          inputFormat: problemData.inputFormat,
+          outputFormat: problemData.outputFormat,
+          solution: problemData.solution,
+        },
+        fileList,
+      );
+
+      const inputCodeRaw = await flashText().generateContent(inputCodePrompt);
+      const outputCodeRaw = await flashText().generateContent(outputCodePrompt);
+
+      const inputGenCode = extractPython(inputCodeRaw.response.text());
+      const outputGenCode = extractPython(outputCodeRaw.response.text());
+
+      fs.writeFileSync(path.join(tempDir, "inputGenCode.py"), inputGenCode);
+      fs.writeFileSync(path.join(tempDir, "outputGenCode.py"), outputGenCode);
+
+      console.log("[genAITestcases] Done");
+      return res.json({ ok: true, sessionId, reasoning });
+    } catch (err) {
+      console.error("[genAITestcases] Error:", err);
+      return res.status(500).json({ ok: false, error: err.message });
+    }
   },
 
-  //CE logic to run
-
+  // ─────────────────────────────────────────────────────────────────────────
+  // runPipeline — unchanged
+  // ─────────────────────────────────────────────────────────────────────────
   runPipeline: async (req, res) => {
-    const path = require("path");
     const data = req.body;
     const sessionId = data.jobid;
     const dir = path.join(__dirname, "../uploads", sessionId);
@@ -421,6 +660,7 @@ Return ONLY Python code. No markdown fences.`;
     const metaData = JSON.parse(
       fs.readFileSync(path.join(dir, "genai_response.json"), "utf-8"),
     );
+
     const jobData = {
       jobid: sessionId,
       inputCode,
@@ -432,9 +672,7 @@ Return ONLY Python code. No markdown fences.`;
     try {
       const response = await fetch(`${APP_CONFIG.CE_ENGINE_BASE}/CEPipeline`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(jobData),
       });
       const result = await response.json();
@@ -444,6 +682,10 @@ Return ONLY Python code. No markdown fences.`;
       res.status(500).json({ ok: false, error: err.message });
     }
   },
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // downloadTestcases — unchanged
+  // ─────────────────────────────────────────────────────────────────────────
   downloadTestcases: async (req, res) => {
     const id = req.params.id;
     console.log("Sending Download req to CE engine");
