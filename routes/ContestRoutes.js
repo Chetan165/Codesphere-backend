@@ -11,6 +11,11 @@ const runCode = require("../controller/RunController.js");
 router.get("/contests", contestController.getAllContests);
 router.get("/contests/:contestId/meta", contestController.getContestMeta);
 router.get(
+  "/contests/:contestId/leaderboard",
+  isloggedin,
+  contestController.getContestLeaderboard,
+);
+router.get(
   "/contests/:contestId/challenges",
   contestController.getContestChallengesList,
 );

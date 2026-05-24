@@ -36,6 +36,7 @@ model Contest {
   problems    Problem[] @relation("ContestProblems")
   submissions Submission[]
   contestStats ContestStats[]
+  private     Boolean   @default(false) // Whether the contest is private or public
 }
 
 model Problem {

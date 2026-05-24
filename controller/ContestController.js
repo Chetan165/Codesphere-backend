@@ -1,8 +1,10 @@
 const Prisma = require("../db/PrismaClient.js");
 const crypto = require("crypto");
+const contestReportService = require("./ContestReportService");
 
 const createContest = async (req, res) => {
-  const { SelectedProblems, title, description, startTime, endTime } = req.body;
+  const { SelectedProblems, title, description, startTime, endTime, private } =
+    req.body;
   console.log("Create Contest API Called");
   try {
     const contest = await Prisma.Contest.create({
@@ -11,6 +13,7 @@ const createContest = async (req, res) => {
         description,
         startTime: new Date(startTime),
         endTime: new Date(endTime),
+        private,
         problems: {
           connect: SelectedProblems.map((pb) => ({ id: pb.id })),
         },
@@ -65,10 +68,19 @@ const createProblem = async (req, res) => {
 };
 
 const getAllContests = async (req, res) => {
+  const AdminStatus = req.user.admin;
   try {
-    const contests = await Prisma.contest.findMany({
-      include: { problems: true },
-    });
+    let contests;
+    if (AdminStatus) {
+      contests = await Prisma.contest.findMany({
+        include: { problems: true },
+      });
+    } else {
+      contests = await Prisma.contest.findMany({
+        where: { private: false },
+        include: { problems: true },
+      });
+    }
     res.json({ contest: contests, ok: true });
   } catch (err) {
     res.json({ ok: false });
@@ -527,4 +539,6 @@ module.exports = {
   getChallengeById,
   registerForContest,
   checkRegistrationForContest,
+  getContestLeaderboard: contestReportService.getContestLeaderboard,
+  downloadContestResultsExcel: contestReportService.downloadContestResultsExcel,
 };

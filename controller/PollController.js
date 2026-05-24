@@ -119,12 +119,9 @@ const PollSubmission = async (req, res) => {
         judge0Status: sub.status.description,
         time: sub.time, // seconds
         memory: sub.memory, // KB
-        // only expose stdout/expected on failure — don't leak answers
         ...(isAC
           ? {}
           : {
-              stdout,
-              expected,
               stderr: sub.stderr || null,
               compile_output: sub.compile_output || null,
             }),

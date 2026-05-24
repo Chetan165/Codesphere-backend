@@ -41,13 +41,15 @@ const JUDGE0_CONFIG = {
     },
     71: {
       // Python 3 (3.8.1) — interpreted, no compile overhead
-      wall_time_limit: 10,
+      wall_time_limit: 8,
+      memory_limit: 256000,
       cpu_time_limit: 10,
     },
     63: {
       // JavaScript (Node.js 12)
-      wall_time_limit: 6,
+      wall_time_limit: 8,
       cpu_time_limit: 10,
+      memory_limit: 256000,
     },
   },
 };

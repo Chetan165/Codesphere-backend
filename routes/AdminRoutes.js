@@ -9,6 +9,11 @@ const AutocraftRouter = require("./Autocraft");
 Router.post("/contest", isloggedin, contestController.createContest);
 Router.put("/contest/:id", isloggedin, contestController.updateContest);
 Router.post("/contest/problem", isloggedin, contestController.createProblem);
+Router.get(
+  "/contest/:contestId/export",
+  isloggedin,
+  contestController.downloadContestResultsExcel,
+);
 Router.use("/autocraft", AutocraftRouter);
 
 // Minimal Problem Automation routes with sessionId for temp storage
