@@ -7,29 +7,9 @@ function formatIso(value) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-function isRealAttempt(submission) {
-  return Boolean(
-    (submission.code && submission.code.trim()) ||
-    (submission.verdict && submission.verdict !== "unattempted") ||
-    Number(submission.score || 0) > 0,
-  );
-}
-
-function pickBestSubmission(currentBest, candidate) {
-  if (!currentBest) return candidate;
-
-  const currentScore = Number(currentBest.score || 0);
-  const candidateScore = Number(candidate.score || 0);
-  if (candidateScore > currentScore) return candidate;
-  if (candidateScore < currentScore) return currentBest;
-
-  const currentTime = new Date(currentBest.submittedAt || 0).getTime();
-  const candidateTime = new Date(candidate.submittedAt || 0).getTime();
-  if (candidateTime < currentTime) return candidate;
-  if (candidateTime > currentTime) return currentBest;
-
-  return candidate.id < currentBest.id ? candidate : currentBest;
-}
+// NOTE: DB keeps only one submission per user×problem for a contest.
+// We therefore don't track attempts or pick between multiple submissions.
+// Use the single submission's score and submittedAt directly.
 
 async function buildContestReport(contestId) {
   const contest = await Prisma.contest.findUnique({
@@ -65,7 +45,6 @@ async function buildContestReport(contestId) {
         name: submission.user.name,
         rollNo: submission.user.rollNo,
         branch: submission.user.branch,
-        year: submission.user.year,
         problems: new Map(),
       };
       usersById.set(submission.userId, userEntry);
@@ -79,51 +58,46 @@ async function buildContestReport(contestId) {
         problemId: submission.problemId,
         problemTitle: problem?.title || "",
         maxScore: problem?.MaxScore ?? 0,
-        attempts: 0,
+        // single submission per user×problem in DB
         bestSubmission: null,
         bestScore: 0,
       };
       userEntry.problems.set(submission.problemId, problemEntry);
     }
 
-    if (isRealAttempt(submission)) {
-      problemEntry.attempts += 1;
-    }
-
-    problemEntry.bestSubmission = pickBestSubmission(
-      problemEntry.bestSubmission,
-      submission,
-    );
-    problemEntry.bestScore = Number(problemEntry.bestSubmission.score || 0);
+    // DB guarantees one stored submission per user/problem for this contest.
+    problemEntry.bestSubmission = submission;
+    problemEntry.bestScore = Number(submission.score || 0);
   }
 
   const leaderboard = Array.from(usersById.values())
     .map((userEntry) => {
       let totalScore = 0;
-      let problemsSolved = 0;
-      let attemptedProblems = 0;
+      let lastSubmittedAtMs = null;
       const problemRows = [];
 
       for (const problem of contest.problems || []) {
         const problemStats = userEntry.problems.get(problem.id);
         const maxScore = Number(problem.MaxScore || 0);
         const bestScore = Number(problemStats?.bestScore || 0);
-        const attempts = Number(problemStats?.attempts || 0);
         const bestSubmission = problemStats?.bestSubmission || null;
 
         totalScore += bestScore;
-        if (maxScore > 0 && bestScore >= maxScore) problemsSolved += 1;
-        if (attempts > 0) attemptedProblems += 1;
+        const submittedAtMs = bestSubmission
+          ? new Date(bestSubmission.submittedAt || 0).getTime()
+          : null;
+        if (submittedAtMs && (!lastSubmittedAtMs || submittedAtMs > lastSubmittedAtMs)) {
+          lastSubmittedAtMs = submittedAtMs;
+        }
 
         problemRows.push({
           problemId: problem.id,
           problemTitle: problem.title,
           maxScore,
-          attempts,
           bestScore,
-          solved: maxScore > 0 && bestScore >= maxScore,
-          bestVerdict: bestSubmission?.verdict || "unattempted",
-          bestLanguage: bestSubmission?.language || "",
+          verdict: bestSubmission?.verdict || "unattempted",
+          language: bestSubmission?.language || "",
+          code: bestSubmission?.code || "",
           bestSubmittedAt: formatIso(bestSubmission?.submittedAt),
         });
       }
@@ -133,17 +107,17 @@ async function buildContestReport(contestId) {
         name: userEntry.name,
         rollNo: userEntry.rollNo,
         branch: userEntry.branch,
-        year: userEntry.year,
         totalScore,
-        problemsSolved,
-        attemptedProblems,
+        lastSubmittedAtMs,
+        lastSubmittedAt: lastSubmittedAtMs ? new Date(lastSubmittedAtMs).toISOString() : null,
         problemRows,
       };
     })
     .sort((a, b) => {
       if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
-      if (b.problemsSolved !== a.problemsSolved)
-        return b.problemsSolved - a.problemsSolved;
+      const aTime = a.lastSubmittedAtMs ?? Infinity;
+      const bTime = b.lastSubmittedAtMs ?? Infinity;
+      if (aTime !== bTime) return aTime - bTime; // earlier last submission wins
       return a.rollNo.localeCompare(b.rollNo) || a.name.localeCompare(b.name);
     })
     .map((row, index) => ({
@@ -157,10 +131,18 @@ async function buildContestReport(contestId) {
     name: row.name,
     rollNo: row.rollNo,
     branch: row.branch,
-    year: row.year,
     totalScore: row.totalScore,
-    problemsSolved: row.problemsSolved,
-    attemptedProblems: row.attemptedProblems,
+    lastSubmittedAt: row.lastSubmittedAt,
+    problemScores: row.problemRows.map((pr) => ({
+      problemId: pr.problemId,
+      problemTitle: pr.problemTitle,
+      maxScore: pr.maxScore,
+      marks: pr.bestScore,
+      verdict: pr.verdict,
+      language: pr.language,
+      code: pr.code,
+      submittedAt: pr.bestSubmittedAt,
+    })),
   }));
 
   const performanceRows = leaderboard.flatMap((row) =>
@@ -171,10 +153,10 @@ async function buildContestReport(contestId) {
       rollNo: row.rollNo,
       problemTitle: problemRow.problemTitle,
       maxScore: problemRow.maxScore,
-      attempts: problemRow.attempts,
       bestScore: problemRow.bestScore,
-      solved: problemRow.solved,
-      language: problemRow.bestLanguage,
+      verdict: problemRow.verdict,
+      language: problemRow.language,
+      code: problemRow.code,
       submittedAt: problemRow.bestSubmittedAt,
     })),
   );
@@ -196,22 +178,93 @@ async function writeContestReportWorkbook(report) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "coding-platorm";
   workbook.created = new Date();
-
   const leaderboardSheet = workbook.addWorksheet("Leaderboard");
-  leaderboardSheet.columns = [
+
+  // Build two header rows: first row merges per-question titles, second row has subheaders.
+  const fixedCols = [
     { header: "Rank", key: "rank", width: 8 },
     { header: "UID", key: "userId", width: 36 },
     { header: "Name", key: "name", width: 24 },
     { header: "Roll No", key: "rollNo", width: 18 },
     { header: "Branch", key: "branch", width: 16 },
-    { header: "Year", key: "year", width: 10 },
-    { header: "Total Score", key: "totalScore", width: 12 },
-    { header: "Problems Solved", key: "problemsSolved", width: 16 },
-    { header: "Attempted Problems", key: "attemptedProblems", width: 18 },
   ];
-  leaderboardSheet.addRows(report.leaderboardRows);
-  leaderboardSheet.getRow(1).font = { bold: true };
-  leaderboardSheet.views = [{ state: "frozen", ySplit: 1 }];
+
+  const perProblemSubcols = ["Marks", "Max", "Verdict", "Lang", "Code"];
+
+  // First header row values (we'll insert later)
+  const headerRow1 = [];
+  // Second header row values
+  const headerRow2 = [];
+
+  // Fixed cols headers
+  for (const c of fixedCols) {
+    headerRow1.push(c.header);
+    headerRow2.push("");
+  }
+
+  // Problem headers (merged across subcols)
+  // We'll reconstruct problem list from the first leaderboard row if available.
+  const problemList = (report.leaderboardRows[0] && report.leaderboardRows[0].problemScores)
+    ? report.leaderboardRows[0].problemScores.map((p) => ({ id: p.problemId, title: p.problemTitle }))
+    : [];
+
+  for (const p of problemList) {
+    for (let i = 0; i < perProblemSubcols.length; i++) headerRow1.push(p.title);
+    for (const sub of perProblemSubcols) headerRow2.push(sub);
+  }
+
+  // Total score header
+  headerRow1.push("Total");
+  headerRow2.push("");
+
+  // Add header rows
+  const r1 = leaderboardSheet.addRow(headerRow1);
+  const r2 = leaderboardSheet.addRow(headerRow2);
+  r1.font = { bold: true };
+  r2.font = { bold: true };
+
+  // Merge cells for problem titles
+  let colIndex = fixedCols.length + 1; // 1-based
+  for (const p of problemList) {
+    const start = colIndex;
+    const end = colIndex + perProblemSubcols.length - 1;
+    leaderboardSheet.mergeCells(1, start, 1, end);
+    colIndex = end + 1;
+  }
+
+  // Set column widths for fixed cols
+  for (let i = 0; i < fixedCols.length; i++) {
+    leaderboardSheet.getColumn(i + 1).width = fixedCols[i].width;
+  }
+
+  // Set widths for per-problem subcols
+  let colCursor = fixedCols.length + 1;
+  for (const p of problemList) {
+    leaderboardSheet.getColumn(colCursor++).width = 10; // Marks
+    leaderboardSheet.getColumn(colCursor++).width = 10; // Max
+    leaderboardSheet.getColumn(colCursor++).width = 12; // Verdict
+    leaderboardSheet.getColumn(colCursor++).width = 12; // Lang
+    leaderboardSheet.getColumn(colCursor++).width = 30; // Code
+  }
+
+  // Total column width
+  leaderboardSheet.getColumn(colCursor).width = 12;
+
+  leaderboardSheet.views = [{ state: "frozen", ySplit: 2 }];
+
+  // Add data rows
+  for (const row of report.leaderboardRows) {
+    const data = [row.rank, row.userId, row.name, row.rollNo, row.branch];
+    for (const ps of (row.problemScores || [])) {
+      data.push(ps.marks);
+      data.push(ps.maxScore);
+      data.push(ps.verdict);
+      data.push(ps.language);
+      data.push(ps.code);
+    }
+    data.push(row.totalScore);
+    leaderboardSheet.addRow(data);
+  }
 
   const performanceSheet = workbook.addWorksheet("Performance");
   performanceSheet.columns = [
@@ -222,17 +275,12 @@ async function writeContestReportWorkbook(report) {
     { header: "Problem", key: "problemTitle", width: 30 },
     { header: "Max Score", key: "maxScore", width: 12 },
     { header: "Best Score", key: "bestScore", width: 12 },
-    { header: "Attempts", key: "attempts", width: 12 },
-    { header: "Solved", key: "solved", width: 10 },
+    { header: "Verdict", key: "verdict", width: 12 },
     { header: "Language", key: "language", width: 18 },
+    { header: "Code", key: "code", width: 40 },
     { header: "Submitted At", key: "submittedAt", width: 24 },
   ];
-  performanceSheet.addRows(
-    report.performanceRows.map((row) => ({
-      ...row,
-      solved: row.solved ? "Yes" : "No",
-    })),
-  );
+  performanceSheet.addRows(report.performanceRows);
   performanceSheet.getRow(1).font = { bold: true };
   performanceSheet.views = [{ state: "frozen", ySplit: 1 }];
 
