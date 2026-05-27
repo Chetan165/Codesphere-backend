@@ -86,7 +86,10 @@ async function buildContestReport(contestId) {
         const submittedAtMs = bestSubmission
           ? new Date(bestSubmission.submittedAt || 0).getTime()
           : null;
-        if (submittedAtMs && (!lastSubmittedAtMs || submittedAtMs > lastSubmittedAtMs)) {
+        if (
+          submittedAtMs &&
+          (!lastSubmittedAtMs || submittedAtMs > lastSubmittedAtMs)
+        ) {
           lastSubmittedAtMs = submittedAtMs;
         }
 
@@ -109,7 +112,9 @@ async function buildContestReport(contestId) {
         branch: userEntry.branch,
         totalScore,
         lastSubmittedAtMs,
-        lastSubmittedAt: lastSubmittedAtMs ? new Date(lastSubmittedAtMs).toISOString() : null,
+        lastSubmittedAt: lastSubmittedAtMs
+          ? new Date(lastSubmittedAtMs).toISOString()
+          : null,
         problemRows,
       };
     })
@@ -204,9 +209,13 @@ async function writeContestReportWorkbook(report) {
 
   // Problem headers (merged across subcols)
   // We'll reconstruct problem list from the first leaderboard row if available.
-  const problemList = (report.leaderboardRows[0] && report.leaderboardRows[0].problemScores)
-    ? report.leaderboardRows[0].problemScores.map((p) => ({ id: p.problemId, title: p.problemTitle }))
-    : [];
+  const problemList =
+    report.leaderboardRows[0] && report.leaderboardRows[0].problemScores
+      ? report.leaderboardRows[0].problemScores.map((p) => ({
+          id: p.problemId,
+          title: p.problemTitle,
+        }))
+      : [];
 
   for (const p of problemList) {
     for (let i = 0; i < perProblemSubcols.length; i++) headerRow1.push(p.title);
@@ -255,7 +264,7 @@ async function writeContestReportWorkbook(report) {
   // Add data rows
   for (const row of report.leaderboardRows) {
     const data = [row.rank, row.userId, row.name, row.rollNo, row.branch];
-    for (const ps of (row.problemScores || [])) {
+    for (const ps of row.problemScores || []) {
       data.push(ps.marks);
       data.push(ps.maxScore);
       data.push(ps.verdict);
@@ -265,24 +274,6 @@ async function writeContestReportWorkbook(report) {
     data.push(row.totalScore);
     leaderboardSheet.addRow(data);
   }
-
-  const performanceSheet = workbook.addWorksheet("Performance");
-  performanceSheet.columns = [
-    { header: "Rank", key: "rank", width: 8 },
-    { header: "UID", key: "userId", width: 36 },
-    { header: "Name", key: "name", width: 24 },
-    { header: "Roll No", key: "rollNo", width: 18 },
-    { header: "Problem", key: "problemTitle", width: 30 },
-    { header: "Max Score", key: "maxScore", width: 12 },
-    { header: "Best Score", key: "bestScore", width: 12 },
-    { header: "Verdict", key: "verdict", width: 12 },
-    { header: "Language", key: "language", width: 18 },
-    { header: "Code", key: "code", width: 40 },
-    { header: "Submitted At", key: "submittedAt", width: 24 },
-  ];
-  performanceSheet.addRows(report.performanceRows);
-  performanceSheet.getRow(1).font = { bold: true };
-  performanceSheet.views = [{ state: "frozen", ySplit: 1 }];
 
   return workbook;
 }

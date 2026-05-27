@@ -454,6 +454,11 @@ const registerForContest = async (req, res) => {
       where: { id: contestId },
       include: { problems: true },
     });
+    if (contest.endTime < new Date()) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "Contest has already ended" });
+    }
     if (!contest)
       return res.status(404).json({ ok: false, error: "Not found" });
 

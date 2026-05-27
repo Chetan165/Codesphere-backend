@@ -72,8 +72,19 @@ Return ONLY valid JSON:
   ]
 }
 
-Be exhaustive. List at least 4 wrong approaches. List at least 6 edge cases.
-Every minimal_killing_example must be manually verified — trace both algorithms.
+Be selective: provide up to 3 high-quality wrong approaches (max 3).
+Each wrong approach must be a substantive, genuine algorithmic or complexity mistake
+that could plausibly pass poorly-designed or naive test suites — NOT trivial issues
+(such as typos, formatting, or minor off-by-one mistakes). Prioritize plausible,
+non-trivial incorrect algorithms that would commonly be implemented by students
+and could slip past weak tests.
+
+Still include at least 6 edge cases in the 'edge_case_inventory' that clearly
+expose the listed wrong approaches. Every 'minimal_killing_example' must be
+manually verified — trace both the wrong algorithm and the correct algorithm.
+
+Return exactly one JSON object, and nothing else — no commentary, no markdown, no code fences, no explanation."
+Require: "All keys and string values must use double quotes. No trailing commas. Escape newlines as \\n and backslashes as \\\\ inside string values."
 `;
 }
 
