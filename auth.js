@@ -3,7 +3,6 @@ const Prisma = require("./db/PrismaClient.js");
 const GoogleStrategy = require("passport-google-oauth2").Strategy;
 require("dotenv").config();
 const APP_CONFIG = require("./config/appConfig");
-
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 passport.use(
@@ -15,7 +14,11 @@ passport.use(
       passReqToCallback: true,
     },
     async function (req, accessToken, refreshToken, profile, done) {
-      if (profile.email && profile.email.endsWith("@tcetmumbai.in")) {
+      if (
+        profile.email &&
+        (APP_CONFIG.EMAIL_DOMAIN === "*" ||
+          profile.email.endsWith(APP_CONFIG.EMAIL_DOMAIN))
+      ) {
         // If the email is valid, proceed with the authentication
         console.log("Valid email:", profile.email);
         const user = await Prisma.User.findUnique({

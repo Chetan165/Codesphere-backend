@@ -20,6 +20,7 @@ const REDIS = {
   port: Number(process.env.REDIS_PORT || 6379),
   password: process.env.REDIS_PASSWORD || undefined,
 };
+const EMAIL_DOMAIN = process.env.EMAIL_DOMAIN || "*";
 
 module.exports = {
   PORT,
@@ -32,4 +33,5 @@ module.exports = {
   GEMINI_API_KEY,
   CE_ENGINE_BASE,
   REDIS,
+  EMAIL_DOMAIN,
 };
