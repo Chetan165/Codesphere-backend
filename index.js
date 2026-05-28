@@ -4,7 +4,6 @@ const session = require("express-session");
 const { RedisStore } = require("connect-redis");
 const cors = require("cors");
 const TestcaseRouter = require("./TestcaseRoute.js");
-const SubmissionRouter = require("./SubmissionRoute.js");
 const updatedSubmission = require("./UpdateSubmission.js");
 const ContestRoutes = require("./routes/ContestRoutes.js");
 const isloggedin = require("./middleware/SessionStatus.js");

@@ -224,8 +224,8 @@ CONSTRAINT REQUIREMENTS:
     difficulty === "Easy"
       ? "Constraints can be relaxed(depends on question). A simple brute force O(n²) may pass."
       : difficulty === "Hard"
-        ? "Constraints are tight. Only the optimal solution passes."
-        : "Moderate. The optimal solution passes. A naive O(n²) should TLE."
+        ? "(USE OPTIMAL CONSTRAINTS)Only the optimal solution passes."
+        : "(USE OPTIMAL CONSTRAINTS)Only the optimal solution passes."
   }
 - Always state explicit constraints: ranges for T, N, and value limits.
 - Do not print memory or time limits in constraints section,

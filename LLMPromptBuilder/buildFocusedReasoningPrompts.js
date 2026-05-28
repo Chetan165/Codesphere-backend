@@ -300,20 +300,21 @@ ALL WRONG APPROACHES WITH VERIFIED KILLING EXAMPLES:
 ${JSON.stringify(approaches.wrong_approaches, null, 2)}
 
 YOUR TASK:
-Select the 2-4 most dangerous wrong approaches — ones that:
-- Pass the sample testcases
-- Pass >70% of random inputs
-- Require specific structural traps to expose
+Select exactly TWO of the most dangerous, non-trivial wrong approaches — ones that:
+  - Pass the sample testcases
+  - Pass >70% of random inputs
+  - Require specific structural traps to expose
+  - Are substantive algorithmic mistakes (no trivial off-by-one, single-value, or formatting-only bugs)
 
-For each selected approach provide everything the fuzzer needs to find mismatches:
+For each selected approach provide everything the fuzzer needs to find mismatches. Ensure each approach is a realistic algorithmic variant (not a trivial heuristic):
 1. Exact implementable pseudocode (with actual variable names from this problem)
 2. Verified minimal_failing_example — you MUST trace both algorithms manually
 3. Multiple structural variants of the trap (not just one pattern)
 4. Scaling instructions to reproduce the trap at N=10, N=50, N=100
 
-The adversarial file must collectively catch ALL selected wrong approaches.
+The adversarial file must collectively catch BOTH selected wrong approaches.
 
-N budget for adversarial file: small to medium (the fuzzer explores, not brute forces)
+N budget for adversarial file: medium (the fuzzer explores, not brute forces)
 Recommended: adversarial_n_budget = sum of all n_values * 3 (fuzzer generates many small cases)
 
 Return JSON:
