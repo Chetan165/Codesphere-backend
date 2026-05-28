@@ -20,7 +20,7 @@ const {
 } = require("../utils/ai");
 const { extractPython } = require("../utils/parsing");
 const APP_CONFIG = require("../config/appConfig");
-
+const { mergeInputGenScripts } = require("../utils/mergeScripts");
 // New multi-stage prompt builders
 const buildApproachMiningPrompt = require("../LLMPromptBuilder/buildApproachMiningPrompt.js");
 const {
@@ -63,6 +63,7 @@ const tagPriority = [
   "Recursion",
   "Array",
 ];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Fixed 5-file topology — always the same, no user selection
 const FIXED_TOPOLOGY = ["sample", "edge", "generic", "large", "adversarial"];
@@ -91,7 +92,6 @@ function mergeReasoningResults(reasoningByType, fileList, approaches) {
   if (edgeResult?.files) {
     for (const file of edgeResult.files) testcases.push(file);
   } else if (edgeResult?.cases) {
-    // flat structure fallback
     const edgeFile = fileList.find((f) => f.type === "edge");
     if (edgeFile)
       testcases.push({ ...edgeResult, file: edgeFile.filename, type: "edge" });
@@ -139,6 +139,13 @@ function mergeReasoningResults(reasoningByType, fileList, approaches) {
       });
   }
 
+  // Pull buggy python functions from adversarial reasoning into merged output
+  // so buildInputCodePrompt can access them directly
+  const advBuggyFunctions =
+    advResult?.files?.[0]?.buggy_implementations ||
+    advResult?.buggy_implementations ||
+    [];
+
   return {
     problem_analysis: {
       broad_tag: approaches.correct_algorithm?.name || "unknown",
@@ -151,10 +158,11 @@ function mergeReasoningResults(reasoningByType, fileList, approaches) {
       identified_common_pitfalls:
         approaches.wrong_approaches?.slice(0, 3).map((a) => a.name) || [],
     },
+    input_signature: approaches.input_signature || null,
+    adversarial_buggy_functions: advBuggyFunctions,
     testcases,
   };
 }
-
 module.exports = {
   // ─────────────────────────────────────────────────────────────────────────
   // genAIProblem — unchanged from original
@@ -471,7 +479,6 @@ Return ONLY Python code. No markdown fences.`;
         ];
 
         const rawResponses = {};
-        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
         for (let i = 0; i < tasks.length; i += 1) {
           const t = tasks[i];
@@ -512,8 +519,8 @@ Return ONLY Python code. No markdown fences.`;
 
       // reasoning is available (either loaded from file or just computed above)
 
-      // ── STAGE 3: Code Generation ──────────────────────────────────────────
-      // Input and output code generated (can be skipped if already present)
+      // ── STAGE 3: Code Generation (SPLIT INTO TWO CALLS) ──────────────────
+
       const inputCodePath = path.join(tempDir, "inputGenCode.py");
       const outputCodePath = path.join(tempDir, "outputGenCode.py");
       const fileNonEmpty = (p) => fs.existsSync(p) && fs.statSync(p).size > 0;
@@ -529,14 +536,51 @@ Return ONLY Python code. No markdown fences.`;
         return res.json({ ok: true, sessionId, reasoning });
       }
 
-      console.log("[genAITestcases] Stage 3: code generation...");
+      console.log("[genAITestcases] Stage 3: code generation (split calls)...");
 
-      const inputCodePrompt = buildInputCodePrompt(
-        { ...problemData, approaches },
+      // Merge buggy functions from adversarial reasoning into approaches
+      const advBuggyFromReasoning = reasoning.adversarial_buggy_functions || [];
+
+      const enrichedApproaches = {
+        ...approaches,
+        wrong_approaches: (approaches.wrong_approaches || []).map((wa) => {
+          if (wa.buggy_python_function) return wa;
+          const advMatch = advBuggyFromReasoning.find(
+            (b) => b.name === wa.name || b.name?.includes(wa.name),
+          );
+          if (advMatch?.python_function) {
+            return { ...wa, buggy_python_function: advMatch.python_function };
+          }
+          return wa;
+        }),
+      };
+
+      const problemWithApproaches = {
+        ...problemData,
+        approaches: enrichedApproaches,
+      };
+
+      // Split file list
+      const nonAdvFileList = fileList.filter((f) => f.type !== "adversarial");
+      const advFileList = fileList.filter((f) => f.type === "adversarial");
+
+      // ── CALL 1: sample + edge + generic + large ──────────────────────────
+      const inputCodePrompt1 = buildInputCodePrompt(
+        problemWithApproaches,
         reasoning,
-        fileList,
-        {},
+        nonAdvFileList, // only non-adversarial files
+        { excludeAdversarial: true },
       );
+
+      // ── CALL 2: adversarial only ─────────────────────────────────────────
+      const inputCodePrompt2 = buildInputCodePrompt(
+        problemWithApproaches,
+        reasoning,
+        advFileList, // only adversarial file
+        { adversarialOnly: true },
+      );
+
+      // ── CALL 3: output code (unchanged) ─────────────────────────────────
       const outputCodePrompt = buildOutputCodePrompt(
         {
           inputFormat: problemData.inputFormat,
@@ -546,17 +590,84 @@ Return ONLY Python code. No markdown fences.`;
         fileList,
       );
 
-      const inputCodeRaw = await flashText().generateContent(inputCodePrompt);
-      const outputCodeRaw =
-        await flashText3_0().generateContent(outputCodePrompt);
+      console.log(
+        "[genAITestcases] Stage 3: launching staggered code gen calls...",
+      );
 
-      const inputGenCode = extractPython(inputCodeRaw.response.text());
+      let inputCodeRaw1, inputCodeRaw2, outputCodeRaw;
+
+      try {
+        const inputCodePromise1 = flashText().generateContent(inputCodePrompt1);
+        await sleep(1500);
+        const inputCodePromise2 = flashText().generateContent(inputCodePrompt2);
+        await sleep(1500);
+        const outputCodePromise =
+          flashText3_0().generateContent(outputCodePrompt);
+
+        [inputCodeRaw1, inputCodeRaw2, outputCodeRaw] = await Promise.all([
+          inputCodePromise1,
+          inputCodePromise2,
+          outputCodePromise,
+        ]);
+      } catch (err) {
+        console.error(
+          "[genAITestcases] Stage 3: one or more code gen calls failed:",
+          err.message,
+        );
+
+        // Fallback: try single combined call
+        console.log(
+          "[genAITestcases] Stage 3: falling back to single combined call...",
+        );
+        const combinedPrompt = buildInputCodePrompt(
+          problemWithApproaches,
+          reasoning,
+          fileList,
+          {},
+        );
+        const combinedRaw = await flashText().generateContent(combinedPrompt);
+        const combinedCode = extractPython(combinedRaw.response.text());
+
+        fs.writeFileSync(path.join(tempDir, "inputGenCode.py"), combinedCode);
+
+        // Output code still needed
+        const outputCodeRawFallback =
+          await flashText3_0().generateContent(outputCodePrompt);
+        const outputGenCode = extractPython(
+          outputCodeRawFallback.response.text(),
+        );
+        fs.writeFileSync(path.join(tempDir, "outputGenCode.py"), outputGenCode);
+
+        console.log("[genAITestcases] Stage 3: done (fallback mode)");
+        return res.json({ ok: true, sessionId, reasoning, mode: "fallback" });
+      }
+
+      const inputGenCode1 = extractPython(inputCodeRaw1.response.text());
+      const inputGenCode2 = extractPython(inputCodeRaw2.response.text());
       const outputGenCode = extractPython(outputCodeRaw.response.text());
 
-      fs.writeFileSync(path.join(tempDir, "inputGenCode.py"), inputGenCode);
+      const mergedInputGenCode = mergeInputGenScripts(
+        inputGenCode1,
+        inputGenCode2,
+      );
+
+      fs.writeFileSync(
+        path.join(tempDir, "inputGenCode.py"),
+        mergedInputGenCode,
+      );
       fs.writeFileSync(path.join(tempDir, "outputGenCode.py"), outputGenCode);
 
-      console.log("[genAITestcases] Done");
+      // Save individual scripts for debugging
+      fs.writeFileSync(
+        path.join(tempDir, "inputGenCode_main.py"),
+        inputGenCode1,
+      );
+      fs.writeFileSync(
+        path.join(tempDir, "inputGenCode_adv.py"),
+        inputGenCode2,
+      );
+
+      console.log("[genAITestcases] Stage 3: done (split mode)");
       return res.json({ ok: true, sessionId, reasoning });
     } catch (err) {
       console.error("[genAITestcases] Error:", err);

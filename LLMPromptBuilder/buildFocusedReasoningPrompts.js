@@ -8,6 +8,8 @@ function buildEdgeReasoningPrompt(
   files,
   difficulty,
 ) {
+  const sig = approaches.input_signature || null;
+
   return `
 You are designing edge case testcases for a competitive programming problem.
 Return ONLY valid JSON.
@@ -17,6 +19,17 @@ INPUT FORMAT: ${problem.inputFormat}
 CONSTRAINTS: ${problem.constraints}
 DIFFICULTY: ${difficulty}
 OPTIMAL COMPLEXITY: ${complexity}
+
+${
+  sig
+    ? `INPUT SIGNATURE:
+Arguments: ${sig.args_list?.join(", ")}
+Types: ${JSON.stringify(sig.args_types)}
+Value range: [${sig.vmin}, ${sig.vmax}]
+Size range: [${sig.nmin}, ${sig.nmax}]
+`
+    : ""
+}
 
 WRONG APPROACHES AND THEIR KILLING EXAMPLES (from analysis):
 ${JSON.stringify(approaches.wrong_approaches, null, 2)}
@@ -30,13 +43,13 @@ YOUR TASK:
 Design edge cases that collectively cover ALL of the following:
 
 TIER 1 — Boundary values (must cover every one that applies):
-- N=1 (single element)
+- N=${sig?.nmin || 1} (minimum size)
 - N=2 (smallest non-trivial)
-- N=max or near-max
+- N near max (${sig?.nmax || "max constraint"}) — only if this file's purpose allows large N
 - All elements equal
-- All elements the maximum allowed value
-- All elements the minimum allowed value (including negatives if allowed)
-- K=1, K=N if K is a parameter
+- All elements the maximum allowed value (${sig?.vmax || "max"})
+- All elements the minimum allowed value (${sig?.vmin || "min"})
+${sig?.scalar_args?.length ? `- Each scalar arg at its min and max value (${sig.scalar_args.join(", ")})` : ""}
 - Empty result edge cases if applicable
 
 TIER 2 — Wrong-approach killers (use the minimal_killing_examples from above):
@@ -57,6 +70,16 @@ TIER 4 — Randomly structured tricky (2-3 cases):
 - These are semi-random but structurally targeted
 
 For EVERY case give exact values. Never write "random values" or "large values".
+
+MINIMUM REQUIREMENTS:
+- At least 3 Tier 1 cases (boundary values)
+- At least 1 case per wrong approach in Tier 2 (${approaches.wrong_approaches?.length || 0} approaches = ${approaches.wrong_approaches?.length || 0} cases minimum)  
+- At least 2 Tier 3 cases
+- At least 2 Tier 4 cases
+- TOTAL: at least ${Math.max(10, 3 + (approaches.wrong_approaches?.length || 0) + 4)} cases
+
+If you cannot fit all cases within constraint limits, prioritize:
+Tier 2 > Tier 1 > Tier 3 > Tier 4
 
 Return JSON:
 {
@@ -94,6 +117,8 @@ function buildLargeReasoningPrompt(
   files,
   difficulty,
 ) {
+  const sig = approaches.input_signature || null;
+
   return `
 You are designing large/stress testcases for a competitive programming problem.
 Return ONLY valid JSON.
@@ -103,6 +128,17 @@ INPUT FORMAT: ${problem.inputFormat}
 CONSTRAINTS: ${problem.constraints}
 DIFFICULTY: ${difficulty}
 OPTIMAL COMPLEXITY: ${complexity}
+
+${
+  sig
+    ? `INPUT SIGNATURE:
+Arguments: ${sig.args_list?.join(", ")}
+Primary size: ${sig.primary_size_arg} (range: ${sig.nmin}-${sig.nmax})
+Primary array: ${sig.primary_array_arg} (values: ${sig.vmin} to ${sig.vmax})
+Scalar args: ${JSON.stringify(sig.scalar_args)}
+`
+    : ""
+}
 
 WORST CASE STRUCTURES (from analysis):
 ${JSON.stringify(approaches.worst_case_structures, null, 2)}
@@ -204,6 +240,8 @@ function buildGenericReasoningPrompt(
   files,
   difficulty,
 ) {
+  const sig = approaches.input_signature || null;
+
   return `
 You are designing generic testcases for a competitive programming problem.
 Return ONLY valid JSON.
@@ -213,6 +251,16 @@ INPUT FORMAT: ${problem.inputFormat}
 CONSTRAINTS: ${problem.constraints}
 DIFFICULTY: ${difficulty}
 OPTIMAL COMPLEXITY: ${complexity}
+
+${
+  sig
+    ? `INPUT SIGNATURE:
+Arguments: ${sig.args_list?.join(", ")}
+Primary size range: [${sig.nmin}, ${sig.nmax}]
+Value range: [${sig.vmin}, ${sig.vmax}]
+`
+    : ""
+}
 
 WRONG APPROACHES AND KILLING STRUCTURES:
 ${JSON.stringify(
@@ -286,6 +334,8 @@ function buildAdversarialReasoningPrompt(
   files,
   difficulty,
 ) {
+  const sig = approaches.input_signature || null;
+
   return `
 You are designing adversarial testcases for a competitive programming problem.
 Return ONLY valid JSON.
@@ -295,6 +345,19 @@ INPUT FORMAT: ${problem.inputFormat}
 CONSTRAINTS: ${problem.constraints}
 DIFFICULTY: ${difficulty}
 OPTIMAL COMPLEXITY: ${complexity}
+
+${
+  sig
+    ? `INPUT SIGNATURE:
+Arguments: ${sig.args_list?.join(", ")}
+Types: ${JSON.stringify(sig.args_types)}
+Primary array: ${sig.primary_array_arg}
+Primary size: ${sig.primary_size_arg}
+Value range: [${sig.vmin}, ${sig.vmax}]
+Size range: [${sig.nmin}, ${sig.nmax}]
+`
+    : ""
+}
 
 ALL WRONG APPROACHES WITH VERIFIED KILLING EXAMPLES:
 ${JSON.stringify(approaches.wrong_approaches, null, 2)}
@@ -311,6 +374,10 @@ For each selected approach provide everything the fuzzer needs to find mismatche
 2. Verified minimal_failing_example — you MUST trace both algorithms manually
 3. Multiple structural variants of the trap (not just one pattern)
 4. Scaling instructions to reproduce the trap at N=10, N=50, N=100
+
+CRITICAL: The buggy_implementations MUST contain actual Python function code that can be
+copy-pasted and executed. NOT pseudocode. NOT descriptions. Real Python functions that
+accept (${sig?.args_list?.join(", ") || "n, arr"}) and return the answer.
 
 The adversarial file must collectively catch BOTH selected wrong approaches.
 
@@ -333,7 +400,7 @@ Return JSON:
         {
           "name": "string",
           "approach_summary": "one sentence",
-          "pseudocode": "5-10 lines, actual variable names, implementable exactly",
+          "python_function": "COMPLETE Python function as a string. Must be def buggy_X(${sig?.args_list?.join(", ") || "n, arr"}): ... return answer. Must contain the actual bug. Comment buggy lines with # BUG. Must be copy-paste runnable.",
           "why_it_seems_correct": "one sentence",
           "why_it_fails": "exact structural condition",
           "estimated_pass_rate_on_random": "e.g. 80%"
@@ -374,7 +441,7 @@ Return JSON:
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// buildSampleReasoningEntry — no LLM needed, just returns the sample instruction
+// buildSampleEntry — no LLM needed
 // ─────────────────────────────────────────────────────────────────────────────
 function buildSampleEntry(files) {
   return files.map((f) => ({
