@@ -168,7 +168,8 @@ module.exports = {
   // genAIProblem — unchanged from original
   // ─────────────────────────────────────────────────────────────────────────
   genAIProblem: async (req, res) => {
-    const { tags, difficulty, additionalContext, API_KEY } = req.body;
+    const { tags, difficulty, additionalContext, API_KEY, ValidSolution } =
+      req.body;
     const expectedComplexity = req.body.expectedComplexity || null;
     const geminiApiKey = API_KEY || APP_CONFIG.GEMINI_API_KEY;
 
@@ -197,7 +198,7 @@ module.exports = {
     const problemPrompt = `
 You are an expert competitive programming problem setter.
 
-${additionalContext ? `User Context(use this info to build the problem): ${additionalContext}\n\n` : ""}
+${additionalContext ? `User Context(CRITICAL : use this exact info to build the problem): ${additionalContext}\n\n` : ""}
 
 STRICT RESKINNING DIRECTIVE:
 CRITICAL: DO NOT INVENT NOVEL ALGORITHMIC LOGIC OR MATH FROM SCRATCH. 
@@ -242,7 +243,7 @@ FORMATTING REQUIREMENTS:
 - Use Markdown for structure. DO NOT use * or - bullets — use $\\\\bullet$ instead.
 - Use LaTeX for math. Double-escape backslashes in JSON (e.g. $\\\\le$).
 - IMPORTANT: Leave a blank line after each $\\\\bullet$ sentence.
-- use -> for plain ASCII arrow if needed for explanation or wherever dont use simple arrow it doesnt render.
+- use $\\\\to$ for arrow if needed for explanation or wherever.
 
 - CRITICAL: sampleInput & sampleOutput must be absolutely correct dry run/execute it to verify the output then write valid explanation for each test case using proper formatting.
 
@@ -268,6 +269,8 @@ OUTPUT FORMAT: ${problemData.outputFormat}
 CONSTRAINTS: ${problemData.constraints}
 SAMPLE INPUT: ${problemData.sampleInput}
 SAMPLE OUTPUT: ${problemData.sampleOutput}
+
+- IMPORTANT: Reference Valid Solution of UnSkinned Problem : ${ValidSolution ? ValidSolution : "Construct valid solution based on problem statement and constraints"}
 
 ${buildSolutionGuidance(tags, problemData.inferredComplexity)}
 
@@ -468,10 +471,18 @@ Return ONLY Python code. No markdown fences.`;
           {
             key: "adversarial",
             factory: flashJSON,
+            // For adversarial reasoning prefer only the top-2 ranked wrong approaches
+            // (controller-side filter). This keeps other prompts unchanged.
             prompt: buildAdversarialReasoningPrompt(
               problemData,
               expectedComplexity,
-              approaches,
+              {
+                ...approaches,
+                wrong_approaches: (approaches.wrong_approaches || [])
+                  .slice()
+                  .sort((a, b) => (a.rank || 999) - (b.rank || 999))
+                  .slice(0, 2),
+              },
               filesByType.adversarial,
               difficulty,
             ),
@@ -573,8 +584,25 @@ Return ONLY Python code. No markdown fences.`;
       );
 
       // ── CALL 2: adversarial only ─────────────────────────────────────────
+      // Create a problem-with-approaches variant that contains only the top-2
+      // ranked wrong_approaches for the adversarial generator.
+      const filteredWrongApproaches = (
+        enrichedApproaches.wrong_approaches || []
+      )
+        .slice()
+        .sort((a, b) => (a.rank || 999) - (b.rank || 999))
+        .slice(0, 2);
+      const enrichedApproachesAdv = {
+        ...enrichedApproaches,
+        wrong_approaches: filteredWrongApproaches,
+      };
+      const problemWithApproachesAdv = {
+        ...problemData,
+        approaches: enrichedApproachesAdv,
+      };
+
       const inputCodePrompt2 = buildInputCodePrompt(
-        problemWithApproaches,
+        problemWithApproachesAdv,
         reasoning,
         advFileList, // only adversarial file
         { adversarialOnly: true },
