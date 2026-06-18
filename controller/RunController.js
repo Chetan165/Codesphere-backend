@@ -1,7 +1,7 @@
 const { v4: uuidv4 } = require("uuid");
 const redis = require("../redis/redisClient");
 const KEYS = require("../redis/redisKeys");
-const { submitSingle } = require("../Judge0Config/client");
+const { submissionQueue } = require("../queue/queues.js");
 
 const runCode = async (req, res) => {
   const {
@@ -20,21 +20,22 @@ const runCode = async (req, res) => {
   }
 
   try {
-    // single submission — client handles all limits via getLimits()
-    const token = await submitSingle(Code, languageId, stdin);
-
     const runId = uuidv4();
-    // store token + expectedOutput so PollRun can evaluate when ready
     await redis.set(
       KEYS.runResult(runId),
-      JSON.stringify({
-        token,
-        status: "pending",
-        expected: expectedValue || null,
-      }),
+      JSON.stringify({ status: "queued", verdict: "pending" }),
       "EX",
       KEYS.RUN_RESULT_TTL,
     );
+
+    await submissionQueue.add(`run:${runId}`, {
+      submissionId: runId,
+      Code,
+      languageId,
+      stdin,
+      expectedValue,
+      isRun: true,
+    });
 
     return res.json({ ok: true, runId });
   } catch (err) {

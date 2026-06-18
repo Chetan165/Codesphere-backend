@@ -1,3 +1,4 @@
+// Judge0Config/client.js
 const { JUDGE0_CONFIG, getLimits, getHeaders } = require("./config");
 
 const BASE = JUDGE0_CONFIG.baseUrl;
@@ -12,7 +13,6 @@ function decodeBase64(value) {
 
 function decodeJudge0Submission(submission) {
   if (!submission) return submission;
-
   return {
     ...submission,
     stdout: decodeBase64(submission.stdout),
@@ -22,30 +22,38 @@ function decodeJudge0Submission(submission) {
 }
 
 /**
- * submitBatch
- * Sends multiple submissions at once (one per testcase).
- * Returns array of { token } objects from Judge0.
- *
- * @param {string}   sourceCode
- * @param {number}   languageId
- * @param {Array}    testcases   — [{ input }]  (NO expected_output)
- * @returns {string[]}           — Judge0 tokens
+ * submitBatchStringOptimized
+ * Streams a raw pre-serialized string payload directly to Judge0.
  */
+async function submitBatchStringOptimized(payloadString) {
+  // Configured with base64_encoded=false as requested
+  const url = `${BASE}/submissions/batch?${B64_FALSE}&wait=false`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      ...getHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: payloadString,
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Judge0 batch string submit failed: ${res.status} ${text}`);
+  }
+
+  const data = await res.json();
+  return data.map((t) => t.token); // Returns string[] of execution tokens
+}
+
 async function submitBatch(sourceCode, languageId, testcases) {
   const limits = getLimits(languageId);
-
   const submissions = testcases.map((tc) => ({
     source_code: sourceCode,
     language_id: languageId,
     stdin: tc.input ?? "",
-    // ← expected_output deliberately omitted — we compare in backend
-    cpu_time_limit: limits.cpu_time_limit,
-    wall_time_limit: limits.wall_time_limit,
-    memory_limit: limits.memory_limit,
-    stack_limit: limits.stack_limit,
-    max_processes: limits.max_processes,
-    max_file_size: limits.max_file_size,
-    enable_network: limits.enable_network,
+    ...limits,
   }));
 
   const res = await fetch(`${BASE}/submissions/batch?${B64_FALSE}&wait=false`, {
@@ -60,17 +68,9 @@ async function submitBatch(sourceCode, languageId, testcases) {
   }
 
   const data = await res.json();
-  return data.map((t) => t.token); // string[]
+  return data.map((t) => t.token);
 }
 
-/**
- * getBatchStatus
- * Polls Judge0 for the current status of multiple tokens in one request.
- * Returns Judge0's submissions array with status, stdout, stderr, time, memory.
- *
- * @param {string[]} tokens
- * @returns {object[]}
- */
 async function getBatchStatus(tokens) {
   const res = await fetch(
     `${BASE}/submissions/batch?tokens=${tokens.join(",")}&${B64_TRUE}&fields=token,status,stdout,stderr,time,memory,compile_output`,
@@ -85,34 +85,27 @@ async function getBatchStatus(tokens) {
   return submissions.map(decodeJudge0Submission);
 }
 
-/**
- * submitSingle
- * Sends one submission for /run — no testcases, optional custom stdin.
- * Returns a single Judge0 token string.
- *
- * @param {string} sourceCode
- * @param {number} languageId
- * @param {string} stdin       — custom input from user (optional)
- * @returns {string}           — Judge0 token
- */
-async function submitSingle(sourceCode, languageId, stdin = "") {
+async function submitSingle(
+  sourceCode,
+  languageId,
+  stdin = "",
+  callback_url = null,
+) {
   const limits = getLimits(languageId);
+  const body = {
+    source_code: sourceCode,
+    language_id: languageId,
+    stdin,
+    ...limits,
+  };
+
+  // Only add callback_url if it's provided
+  if (callback_url) body.callback_url = callback_url;
 
   const res = await fetch(`${BASE_RUN}/submissions?${B64_FALSE}&wait=false`, {
     method: "POST",
-    headers: getHeaders(),
-    body: JSON.stringify({
-      source_code: sourceCode,
-      language_id: languageId,
-      stdin,
-      cpu_time_limit: limits.cpu_time_limit,
-      wall_time_limit: limits.wall_time_limit,
-      memory_limit: limits.memory_limit,
-      stack_limit: limits.stack_limit,
-      max_processes: limits.max_processes,
-      max_file_size: limits.max_file_size,
-      enable_network: limits.enable_network,
-    }),
+    headers: { ...getHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
@@ -124,13 +117,6 @@ async function submitSingle(sourceCode, languageId, stdin = "") {
   return token;
 }
 
-/**
- * getSingleStatus
- * Gets the result of a single /run token.
- *
- * @param {string} token
- * @returns {object}
- */
 async function getSingleStatus(token) {
   const res = await fetch(
     `${BASE_RUN}/submissions/${token}?${B64_TRUE}&fields=status,stdout,stderr,time,memory,compile_output`,
@@ -140,8 +126,13 @@ async function getSingleStatus(token) {
     const text = await res.text();
     throw new Error(`Judge0 status fetch failed: ${res.status} ${text}`);
   }
-
   return decodeJudge0Submission(await res.json());
 }
 
-module.exports = { submitBatch, getBatchStatus, submitSingle, getSingleStatus };
+module.exports = {
+  submitBatch,
+  getBatchStatus,
+  submitSingle,
+  getSingleStatus,
+  submitBatchStringOptimized,
+};

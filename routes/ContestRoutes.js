@@ -13,6 +13,10 @@ router.get(
   isloggedin,
   contestController.getContestMeta,
 );
+router.put(
+  "/callbacks/judge0",
+  require("../controller/Judge0Callback.js").Judge0Callback,
+);
 router.get(
   "/contests/:contestId/leaderboard",
   isloggedin,
