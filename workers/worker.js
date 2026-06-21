@@ -15,6 +15,9 @@ const CALLBACK_URL =
   process.env.JUDGE0_CALLBACK_URL ||
   "http://localhost:3000/api/callbacks/judge0";
 
+// Shape cache (stdin only) + grading cache (expected output) — 2hr TTL
+const SHAPE_TTL = 60 * 60 * 2;
+
 const worker = new Worker(
   "submission-queue",
   async (job) => {
@@ -27,68 +30,77 @@ const worker = new Worker(
       uid,
       expectedValue,
       stdin,
+      isRun,
     } = job.data;
 
     console.log(`[Worker] Processing submission: ${submissionId}`);
 
-    if (!stdin && !expectedValue) {
+    if (!isRun) {
       await redis.set(
         KEYS.subResult(submissionId),
         JSON.stringify({ status: "processing", verdict: "pending" }),
-        "EX",
-        KEYS.SUB_TOKENS_TTL,
+        { EX: KEYS.SUB_TOKENS_TTL },
       );
 
-      const tcTemplateKey = `problem:${problemId}:json_template`;
-      let cachedWrapperRaw = await redis.get(tcTemplateKey);
-      let submissionsArrayString;
-      let totalCount = 0;
+      // 1. Check if testcase shape (stdin list) exists in Redis
+      const shapeKey = `problem:${problemId}:shape`;
+      let shapeRaw = await redis.get(shapeKey);
+      let stdinList; // array of { input } strings, DB-order preserved
+      let totalCount;
 
-      if (!cachedWrapperRaw) {
+      if (!shapeRaw) {
+        // 2. Cache miss -> pull from DB once, cache both shape + grading data
         const testcases = await prisma.testCase.findMany({
           where: { problemId },
         });
-        if (!testcases.length)
+
+        if (!testcases.length) {
           throw new Error(`No testcases assigned to problem: ${problemId}`);
+        }
 
         totalCount = testcases.length;
-        const limits = getLimits(languageId);
-        const templateArray = testcases.map((tc) => ({
-          source_code: "##CODE_TOKEN##",
-          language_id: "##LANG_TOKEN##",
-          stdin: tc.input ?? "",
-          callback_url: "##CALLBACK_URL_TOKEN##",
-          ...limits,
-        }));
+        stdinList = testcases.map((tc) => tc.input ?? "");
 
-        submissionsArrayString = JSON.stringify(templateArray);
+        // shape cache: just stdin per testcase, language-agnostic
+        await redis.set(shapeKey, JSON.stringify({ stdinList, totalCount }), {
+          EX: SHAPE_TTL,
+        });
+
+        // grading cache: expected output + visibility, used by evaluation worker
+        const expectedArray = testcases.map((tc) => ({
+          output: tc.output,
+          isPublic: tc.isPublic,
+        }));
         await redis.set(
-          tcTemplateKey,
-          JSON.stringify({ submissionsArrayString, totalCount }),
-          "EX",
-          KEYS.TESTCASES_TTL,
+          KEYS.testcases(problemId),
+          JSON.stringify(expectedArray),
+          { EX: SHAPE_TTL },
         );
       } else {
-        const parsedWrapper = JSON.parse(cachedWrapperRaw);
-        submissionsArrayString = parsedWrapper.submissionsArrayString;
-        totalCount = parsedWrapper.totalCount;
+        const parsed = JSON.parse(shapeRaw);
+        stdinList = parsed.stdinList;
+        totalCount = parsed.totalCount;
       }
 
-      const finalizedArrayBody = submissionsArrayString
-        .replaceAll('"##CODE_TOKEN##"', JSON.stringify(Code))
-        .replaceAll('"##LANG_TOKEN##"', languageId)
-        .replaceAll('"##CALLBACK_URL_TOKEN##"', JSON.stringify(CALLBACK_URL));
+      // 3. Build the Judge0 payload as real objects — no string templating
+      const limits = getLimits(languageId);
+      const submissionsArray = stdinList.map((input) => ({
+        source_code: Code,
+        language_id: languageId,
+        stdin: input,
+        callback_url: CALLBACK_URL,
+        ...limits,
+      }));
 
       const tokens = await submitBatchStringOptimized(
-        `{"submissions":${finalizedArrayBody}}`,
+        JSON.stringify({ submissions: submissionsArray }),
       );
 
       for (let i = 0; i < tokens.length; i++) {
         await redis.set(
           `token:map:${tokens[i]}`,
           JSON.stringify({ submissionId, index: i }),
-          "EX",
-          KEYS.SUB_TOKENS_TTL,
+          { EX: KEYS.SUB_TOKENS_TTL },
         );
       }
 
@@ -101,16 +113,16 @@ const worker = new Worker(
           uid,
           contestKey,
           totalCount,
+          Code,
+          languageId,
         }),
-        "EX",
-        KEYS.SUB_TOKENS_TTL,
+        { EX: KEYS.SUB_TOKENS_TTL },
       );
     } else {
       await redis.set(
         KEYS.runResult(submissionId),
         JSON.stringify({ status: "processing", verdict: "pending" }),
-        "EX",
-        KEYS.SUB_TOKENS_TTL,
+        { EX: KEYS.SUB_TOKENS_TTL },
       );
 
       const token = await submitSingle(
@@ -123,8 +135,7 @@ const worker = new Worker(
       await redis.set(
         `token:map:${token}`,
         JSON.stringify({ submissionId, index: 0, isRun: true }),
-        "EX",
-        KEYS.SUB_TOKENS_TTL,
+        { EX: KEYS.SUB_TOKENS_TTL },
       );
 
       await redis.set(
@@ -139,8 +150,7 @@ const worker = new Worker(
           contestKey,
           totalCount: 1,
         }),
-        "EX",
-        KEYS.SUB_TOKENS_TTL,
+        { EX: KEYS.SUB_TOKENS_TTL },
       );
     }
   },

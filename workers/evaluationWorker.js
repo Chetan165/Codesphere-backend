@@ -45,8 +45,32 @@ const worker = new Worker(
       data;
 
     const tcKey = KEYS.testcases(problemId);
-    const tcRaw = await redis.get(tcKey);
-    if (!tcRaw) throw new Error(`Testcase template dropped for: ${problemId}`);
+    let tcRaw = await redis.get(tcKey);
+
+    if (!tcRaw) {
+      const testcasesFromDb = await prisma.testCase.findMany({
+        where: { problemId },
+      });
+
+      if (!testcasesFromDb.length) {
+        await redis.set(
+          KEYS.subResult(submissionId),
+          JSON.stringify({
+            status: "error",
+            message: `No testcases found for: ${problemId}`,
+          }),
+          { EX: KEYS.SUB_RESULT_TTL },
+        );
+        throw new Error(`No testcases found for: ${problemId}`);
+      }
+
+      const expectedArray = testcasesFromDb.map((tc) => ({
+        output: tc.output,
+        isPublic: tc.isPublic,
+      }));
+      tcRaw = JSON.stringify(expectedArray);
+      await redis.set(tcKey, tcRaw, { EX: KEYS.TESTCASES_TTL });
+    }
 
     const testcases = JSON.parse(tcRaw);
     const problem = await prisma.problem.findUnique({
@@ -62,20 +86,36 @@ const worker = new Worker(
     const results = [];
 
     for (let i = 0; i < totalCount; i++) {
-      const tcData = JSON.parse(await redis.get(`sub:${submissionId}:tc:${i}`));
+      const tcRawData = await redis.get(`sub:${submissionId}:tc:${i}`);
+
+      if (!tcRawData) {
+        firstError = firstError || {
+          testcase: i + 1,
+          status: "Result missing",
+        };
+        results.push({
+          testcase: i + 1,
+          pass: false,
+          status: "Result missing",
+          time: "0.000",
+          memory: 0,
+        });
+        continue;
+      }
+
+      const tcData = JSON.parse(tcRawData);
       const expectedTC = testcases[i];
       const stdout = normalizeOutputOptimized(decodeBase64(tcData.stdout));
       const expectedNorm = normalizeOutputOptimized(expectedTC?.output);
-      const isAC = tcData.status.id === 3 && stdout === expectedNorm;
+      const isAC = tcData.status?.id === 3 && stdout === expectedNorm;
 
       if (isAC) {
         passed++;
         if (!expectedTC?.isPublic) passedNonPublic++;
       } else if (!firstError) {
-        firstError = { testcase: i + 1, status: tcData.status.description };
+        firstError = { testcase: i + 1, status: tcData.status?.description };
       }
 
-      // Fixed: Appending raw metrics to individual test case logs
       results.push({
         testcase: i + 1,
         pass: isAC,
@@ -91,7 +131,6 @@ const worker = new Worker(
         ? Math.round((passedNonPublic / nonPublicCount) * maxScore)
         : 0;
 
-    // Fixed: Calculating aggregated execution overhead metrics
     const totalTime = results.reduce(
       (acc, r) => acc + (parseFloat(r.time) || 0),
       0,
@@ -114,27 +153,28 @@ const worker = new Worker(
       select: { id: true, score: true },
     });
 
-    if (
-      stored &&
-      (computedScore > (stored.score || 0) ||
-        (computedScore === 0 && stored.score === 0))
-    ) {
+    if (!stored) {
+      console.error(
+        `[Evaluation] No submission row found for userId=${uid}, problemId=${problemId}, contestId=${contestKey}. Verdict computed but NOT persisted to Postgres.`,
+      );
+    } else if (computedScore > (stored.score || 0)) {
       await prisma.submission.update({
         where: { id: stored.id },
         data: {
           verdict: verdict.status,
           score: computedScore,
+          language: languageOptions[languageId] || String(languageId),
+          code: Code,
+          passedCount: passed,
+          totalCount: totalCount,
           submittedAt: new Date(),
         },
       });
     }
 
-    await redis.set(
-      KEYS.subResult(submissionId),
-      JSON.stringify(verdict),
-      "EX",
-      KEYS.SUB_RESULT_TTL,
-    );
+    await redis.set(KEYS.subResult(submissionId), JSON.stringify(verdict), {
+      EX: KEYS.SUB_RESULT_TTL,
+    });
     await redis.del(subTokensKey);
     for (const t of tokens) await redis.del(`token:map:${t}`);
   },

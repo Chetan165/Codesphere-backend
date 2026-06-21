@@ -73,12 +73,9 @@ const Judge0Callback = async (req, res) => {
         passed: isAC,
       };
 
-      await redis.set(
-        KEYS.runResult(submissionId),
-        JSON.stringify(result),
-        "EX",
-        300,
-      );
+      await redis.set(KEYS.runResult(submissionId), JSON.stringify(result), {
+        EX: 60,
+      });
       return res.status(200).send("Run processed.");
     }
 
@@ -86,8 +83,7 @@ const Judge0Callback = async (req, res) => {
     await redis.set(
       singleResultKey,
       JSON.stringify({ status, stdout, stderr, compile_output, time, memory }),
-      "EX",
-      300,
+      { EX: 60 },
     );
 
     const subTokensRaw = await redis.get(KEYS.subTokens(submissionId));
@@ -105,13 +101,10 @@ const Judge0Callback = async (req, res) => {
 
     if (Number(completedCount) === Number(totalCount)) {
       const queueLockKey = `sub:${submissionId}:queue_lock`;
-      const isFirstToTrigger = await redis.set(
-        queueLockKey,
-        "1",
-        "NX",
-        "EX",
-        300,
-      );
+      const isFirstToTrigger = await redis.set(queueLockKey, "1", {
+        NX: true,
+        EX: 300,
+      });
 
       if (isFirstToTrigger) {
         await evaluationQueue.add(

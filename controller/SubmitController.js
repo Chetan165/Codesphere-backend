@@ -1,10 +1,10 @@
-// controllers/SubmitCode.js
 const { v4: uuidv4 } = require("uuid");
 const redis = require("../redis/redisClient");
 const KEYS = require("../redis/redisKeys");
 const { submissionQueue } = require("../queue/queues.js");
 
 const SubmitCode = async (req, res) => {
+  const t1 = Date.now();
   const { Code, problemId, ContestId, languageId, uid } = req.body.Submission;
 
   if (!Code || !problemId || !languageId || !uid) {
@@ -17,15 +17,12 @@ const SubmitCode = async (req, res) => {
     const submissionId = uuidv4();
     const contestKey = ContestId || null;
 
-    // Initialize state in Redis cache for the frontend polling router
     await redis.set(
       KEYS.subResult(submissionId),
       JSON.stringify({ status: "queued", verdict: "pending" }),
-      "EX",
-      KEYS.SUB_TOKENS_TTL,
+      { EX: KEYS.SUB_RESULT_TTL },
     );
 
-    // Drop tracking parameters cleanly onto the Stage 1 task queue
     await submissionQueue.add(`submit:${submissionId}`, {
       submissionId,
       Code,
@@ -33,9 +30,12 @@ const SubmitCode = async (req, res) => {
       contestKey,
       languageId,
       uid,
+      isRun: false,
     });
 
-    // Instant exit path — thread memory allocations are kept low
+    const t2 = Date.now();
+    console.log(`[submit] Time taken: ${t2 - t1} ms`);
+
     return res.json({ ok: true, submissionId });
   } catch (err) {
     console.error("[/submit]", err.message);

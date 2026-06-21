@@ -24,8 +24,7 @@ const runCode = async (req, res) => {
     await redis.set(
       KEYS.runResult(runId),
       JSON.stringify({ status: "queued", verdict: "pending" }),
-      "EX",
-      KEYS.RUN_RESULT_TTL,
+      { EX: KEYS.RUN_RESULT_TTL },
     );
 
     await submissionQueue.add(`run:${runId}`, {
