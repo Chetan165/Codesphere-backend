@@ -12,6 +12,9 @@ const SubmitCode = async (req, res) => {
       .status(400)
       .json({ ok: false, message: "Missing required fields" });
   }
+  if (uid !== req.user.uid) {
+    return res.status(403).json({ ok: false, message: "User ID mismatch" });
+  }
 
   try {
     const submissionId = uuidv4();
